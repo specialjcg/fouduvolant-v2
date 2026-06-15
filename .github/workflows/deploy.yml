@@ -38,6 +38,9 @@ jobs:
           ./node_modules/.bin/elm make src/Main.elm --optimize --output=elm.js
           mkdir -p ../static
           cp index.html elm.js ../static/
+          # Cache-bust : Cloudflare cache elm.js par extension ; on versionne l'URL
+          # par commit pour que chaque déploiement serve le JS frais sans purge.
+          sed -i "s|src=\"elm.js\"|src=\"elm.js?v=${GITHUB_SHA}\"|" ../static/index.html
 
       # --- Deploy to VPS (replaces the original fouduvolant) ---
       - name: Setup SSH key
