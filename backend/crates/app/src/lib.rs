@@ -14,6 +14,7 @@ use postgres_es::{default_postgress_pool, postgres_cqrs, PostgresCqrs};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
 
+use domain::bracket::{build_bracket, Bracket, BracketCommand, BracketError, BracketKind};
 use domain::generation::round_robin_pairs;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
 use domain::matches::{Match, MatchCommand, MatchError, MatchEvent};
@@ -107,6 +108,23 @@ pub struct BoardView {
     pub matches: Vec<MatchView>,
 }
 
+/// One node of a bracket tree, with team names resolved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BracketNodeView {
+    /// Main or consolation.
+    pub kind: BracketKind,
+    /// Round, 1-based.
+    pub round: u8,
+    /// Index within the round, 0-based.
+    pub index: u16,
+    /// First side name (`None` = bye / unknown).
+    pub team_a: Option<String>,
+    /// Second side name.
+    pub team_b: Option<String>,
+    /// Winner name once decided.
+    pub winner: Option<String>,
+}
+
 /// Idempotent event-store schema, applied by [`App::run_migrations`].
 const MIGRATION_SQL: &str = include_str!("../../../db/init.sql");
 
@@ -115,6 +133,7 @@ pub struct App {
     pool: Pool<Postgres>,
     tournaments: PostgresCqrs<Tournament>,
     matches: PostgresCqrs<Match>,
+    brackets: PostgresCqrs<Bracket>,
 }
 
 impl App {
@@ -134,10 +153,12 @@ impl App {
     pub fn from_pool(pool: Pool<Postgres>) -> Self {
         let tournaments = postgres_cqrs(pool.clone(), vec![], ());
         let matches = postgres_cqrs(pool.clone(), vec![], ());
+        let brackets = postgres_cqrs(pool.clone(), vec![], ());
         Self {
             pool,
             tournaments,
             matches,
+            brackets,
         }
     }
 
@@ -446,6 +467,209 @@ impl App {
             });
         }
         Ok(out)
+    }
+
+    /// Execute a command against a tournament's bracket aggregate.
+    ///
+    /// # Errors
+    /// Returns [`AggregateError`] if the command is rejected or persistence fails.
+    pub async fn bracket(
+        &self,
+        id: TournamentId,
+        command: BracketCommand,
+    ) -> Result<(), AggregateError<BracketError>> {
+        self.brackets.execute(&id.to_string(), command).await
+    }
+
+    /// Draw the bracket from current pool standings: the top `per_pool` of each
+    /// pool seed the main draw (rank-major, pools interleaved); the rest seed the
+    /// consolation draw. Then schedules the first playable matches.
+    ///
+    /// Idempotent: re-running after the draw exists just advances.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on too few qualified teams or a store/command failure.
+    pub async fn generate_bracket(
+        &self,
+        tournament_id: TournamentId,
+        per_pool: usize,
+    ) -> Result<Vec<MatchId>, AppError> {
+        let standings = self.standings(tournament_id).await?;
+        let mut main: Vec<(u32, usize, TeamId)> = Vec::new();
+        let mut cons: Vec<(u32, usize, TeamId)> = Vec::new();
+        for (pool_idx, ps) in standings.iter().enumerate() {
+            for row in &ps.rows {
+                let entry = (row.rank, pool_idx, row.team);
+                if (row.rank as usize) <= per_pool {
+                    main.push(entry);
+                } else {
+                    cons.push(entry);
+                }
+            }
+        }
+        // Rank-major ordering keeps pools apart in the seeding.
+        main.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        cons.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let main_seeds: Vec<TeamId> = main.into_iter().map(|(_, _, t)| t).collect();
+        let consolation_seeds: Vec<TeamId> = cons.into_iter().map(|(_, _, t)| t).collect();
+
+        if main_seeds.len() < 2 {
+            return Err(AppError::Command(
+                "at least two qualified teams are required".into(),
+            ));
+        }
+
+        match self
+            .bracket(
+                tournament_id,
+                BracketCommand::Draw {
+                    main_seeds,
+                    consolation_seeds,
+                },
+            )
+            .await
+        {
+            Ok(()) => {}
+            // Already drawn → fall through and just advance.
+            Err(AggregateError::UserError(BracketError::AlreadyDrawn)) => {}
+            Err(e) => return Err(AppError::Command(e.to_string())),
+        }
+
+        self.advance_bracket(tournament_id).await
+    }
+
+    /// Schedule every bracket match whose teams are now known and not yet
+    /// scheduled. Pull-based, idempotent — safe to call after each result.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a store or command failure.
+    pub async fn advance_bracket(
+        &self,
+        tournament_id: TournamentId,
+    ) -> Result<Vec<MatchId>, AppError> {
+        let Some((main_seeds, consolation_seeds)) = self.bracket_seeds(tournament_id).await?
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(view) = self.tournament_view(tournament_id).await? else {
+            return Ok(Vec::new());
+        };
+        let format = view.bracket_format;
+
+        let bracket_matches: Vec<MatchView> = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .filter(|v| v.tournament == tournament_id && v.pool.is_none())
+            .collect();
+
+        let unordered = |a: TeamId, b: TeamId| if a <= b { (a, b) } else { (b, a) };
+        let results: Vec<(TeamId, TeamId, TeamId)> = bracket_matches
+            .iter()
+            .filter_map(|v| v.winner.map(|w| (v.team_a, v.team_b, w)))
+            .collect();
+        let mut existing: std::collections::HashSet<(TeamId, TeamId)> = bracket_matches
+            .iter()
+            .map(|v| unordered(v.team_a, v.team_b))
+            .collect();
+
+        let mut created = Vec::new();
+        for node in build_bracket(&main_seeds, &consolation_seeds, &results) {
+            if !node.is_playable() {
+                continue;
+            }
+            let (a, b) = (
+                node.team_a.expect("playable has team_a"),
+                node.team_b.expect("playable has team_b"),
+            );
+            if !existing.insert(unordered(a, b)) {
+                continue;
+            }
+            let match_id = MatchId::new();
+            self.match_cmd(
+                match_id,
+                MatchCommand::Schedule {
+                    match_id,
+                    tournament_id,
+                    format,
+                    team_a: a,
+                    team_b: b,
+                    pool_id: None,
+                },
+            )
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+            created.push(match_id);
+        }
+        Ok(created)
+    }
+
+    /// The bracket tree (main + consolation) with team names resolved.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a store or deserialization failure.
+    pub async fn bracket_view(
+        &self,
+        tournament_id: TournamentId,
+    ) -> Result<Vec<BracketNodeView>, AppError> {
+        let Some((main_seeds, consolation_seeds)) = self.bracket_seeds(tournament_id).await?
+        else {
+            return Ok(Vec::new());
+        };
+        let names: std::collections::HashMap<TeamId, String> = self
+            .tournament_view(tournament_id)
+            .await?
+            .map(|v| v.teams.into_iter().map(|t| (t.id, t.name)).collect())
+            .unwrap_or_default();
+        let name = |t: Option<TeamId>| t.and_then(|id| names.get(&id).cloned());
+
+        let results: Vec<(TeamId, TeamId, TeamId)> = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .filter(|v| v.tournament == tournament_id && v.pool.is_none())
+            .filter_map(|v| v.winner.map(|w| (v.team_a, v.team_b, w)))
+            .collect();
+
+        Ok(build_bracket(&main_seeds, &consolation_seeds, &results)
+            .into_iter()
+            .map(|n| BracketNodeView {
+                kind: n.kind,
+                round: n.round,
+                index: n.index,
+                team_a: name(n.team_a),
+                team_b: name(n.team_b),
+                winner: name(n.winner),
+            })
+            .collect())
+    }
+
+    /// Replay the bracket aggregate's draw, if any.
+    async fn bracket_seeds(
+        &self,
+        tournament_id: TournamentId,
+    ) -> Result<Option<(Vec<TeamId>, Vec<TeamId>)>, AppError> {
+        let rows = sqlx::query(
+            "SELECT payload FROM events \
+             WHERE aggregate_type = 'Bracket' AND aggregate_id = $1 \
+             ORDER BY sequence",
+        )
+        .bind(tournament_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut seeds = None;
+        for row in rows {
+            let payload: serde_json::Value = row.try_get("payload")?;
+            let domain::bracket::BracketEvent::Drawn {
+                main_seeds,
+                consolation_seeds,
+            } = serde_json::from_value(payload)?;
+            seeds = Some((main_seeds, consolation_seeds));
+        }
+        Ok(seeds)
     }
 
     /// Replay a tournament's events in sequence order.

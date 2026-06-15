@@ -8,6 +8,7 @@
 //! Read models (standings, schedule, brackets) live outside this crate as
 //! projections built from the event streams.
 
+pub mod bracket;
 pub mod generation;
 pub mod ids;
 pub mod matches;

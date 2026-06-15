@@ -68,6 +68,8 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/dispatch", post(dispatch))
         .route("/tournaments/{id}/board", get(board))
         .route("/tournaments/{id}/standings", get(standings))
+        .route("/tournaments/{id}/bracket", get(get_bracket).post(generate_bracket))
+        .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
         .route("/matches/{id}/start", post(start_match))
         .route("/matches/{id}/sets", post(record_set))
         .layer(TraceLayer::new_for_http())
@@ -142,6 +144,11 @@ struct DispatchResponse {
 #[derive(Serialize)]
 struct CreatedResponse {
     created: Vec<MatchId>,
+}
+
+#[derive(Deserialize)]
+struct GenerateBracket {
+    per_pool: usize,
 }
 
 // ---- Handlers ----
@@ -335,6 +342,32 @@ async fn standings(
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     Ok(Json(app.standings(TournamentId(id)).await?).into_response())
+}
+
+async fn get_bracket(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    Ok(Json(app.bracket_view(TournamentId(id)).await?).into_response())
+}
+
+async fn generate_bracket(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<GenerateBracket>,
+) -> Result<Response, ApiError> {
+    let created = app
+        .generate_bracket(TournamentId(id), body.per_pool)
+        .await?;
+    Ok((StatusCode::CREATED, Json(CreatedResponse { created })).into_response())
+}
+
+async fn advance_bracket(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let created = app.advance_bracket(TournamentId(id)).await?;
+    Ok(Json(CreatedResponse { created }).into_response())
 }
 
 // ---- Error mapping ----

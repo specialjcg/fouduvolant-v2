@@ -46,6 +46,18 @@ type alias Sel =
     , teamB : String
     , scores : Dict String ( String, String )
     , standings : List PoolStandings
+    , bracket : List BracketNode
+    , perPool : String
+    }
+
+
+type alias BracketNode =
+    { kind : String
+    , round : Int
+    , index : Int
+    , teamA : Maybe String
+    , teamB : Maybe String
+    , winner : Maybe String
     }
 
 
@@ -121,6 +133,10 @@ type Msg
     | GotView (Result Http.Error TView)
     | GotBoard (Result Http.Error Board)
     | GotStandings (Result Http.Error (List PoolStandings))
+    | GotBracket (Result Http.Error (List BracketNode))
+    | SetPerPool String
+    | GenBracket
+    | AdvanceBracket
     | SetNewTeam String
     | AddTeam
     | SetCourts String
@@ -187,6 +203,24 @@ update msg model =
 
         GotStandings (Err _) ->
             ( model, Cmd.none )
+
+        GotBracket (Ok b) ->
+            ( { model | sel = Maybe.map (\s -> { s | bracket = b }) model.sel }, Cmd.none )
+
+        GotBracket (Err _) ->
+            ( model, Cmd.none )
+
+        SetPerPool s ->
+            ( mapSel (\s_ -> { s_ | perPool = s }) model, Cmd.none )
+
+        GenBracket ->
+            withSel model
+                (\s ->
+                    ( model, genBracket model.api s.id (Maybe.withDefault 2 (String.toInt s.perPool)) )
+                )
+
+        AdvanceBracket ->
+            withSel model (\s -> ( model, advBracket model.api s.id ))
 
         SetNewTeam s ->
             ( mapSel (\s_ -> { s_ | newTeam = s }) model, Cmd.none )
@@ -326,6 +360,8 @@ mergeView prev v =
             , teamB = ""
             , scores = Dict.empty
             , standings = []
+            , bracket = []
+            , perPool = "2"
             }
 
 
@@ -346,7 +382,7 @@ withSel model f =
 
 openCmds : String -> String -> Cmd Msg
 openCmds api id =
-    Cmd.batch [ loadView api id, loadBoard api id, loadStandings api id ]
+    Cmd.batch [ loadView api id, loadBoard api id, loadStandings api id, loadBracket api id ]
 
 
 refresh : Model -> Cmd Msg
@@ -363,7 +399,11 @@ refreshBoard : Model -> Cmd Msg
 refreshBoard model =
     case model.sel of
         Just s ->
-            Cmd.batch [ loadBoard model.api s.id, loadStandings model.api s.id ]
+            Cmd.batch
+                [ loadBoard model.api s.id
+                , loadStandings model.api s.id
+                , loadBracket model.api s.id
+                ]
 
         Nothing ->
             Cmd.none
@@ -420,6 +460,28 @@ addTeam api tid name =
 configureCourts : String -> String -> Int -> Cmd Msg
 configureCourts api tid n =
     postEmpty api ("/tournaments/" ++ tid ++ "/courts") (E.object [ ( "count", E.int n ) ])
+
+
+loadBracket : String -> String -> Cmd Msg
+loadBracket api id =
+    Http.get
+        { url = api ++ "/tournaments/" ++ id ++ "/bracket"
+        , expect = Http.expectJson GotBracket (D.list bracketNodeDec)
+        }
+
+
+genBracket : String -> String -> Int -> Cmd Msg
+genBracket api tid perPool =
+    postEmpty api ("/tournaments/" ++ tid ++ "/bracket") (E.object [ ( "per_pool", E.int perPool ) ])
+
+
+advBracket : String -> String -> Cmd Msg
+advBracket api tid =
+    Http.post
+        { url = api ++ "/tournaments/" ++ tid ++ "/bracket/advance"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever Mutated
+        }
 
 
 createPool : String -> String -> String -> List String -> Cmd Msg
@@ -539,6 +601,17 @@ suggDec =
     D.map2 Sugg (D.field "match_id" D.string) (D.field "needs_rest" D.bool)
 
 
+bracketNodeDec : D.Decoder BracketNode
+bracketNodeDec =
+    D.map6 BracketNode
+        (D.field "kind" D.string)
+        (D.field "round" D.int)
+        (D.field "index" D.int)
+        (D.field "team_a" (D.nullable D.string))
+        (D.field "team_b" (D.nullable D.string))
+        (D.field "winner" (D.nullable D.string))
+
+
 poolStandingsDec : D.Decoder PoolStandings
 poolStandingsDec =
     D.map3 PoolStandings
@@ -648,6 +721,60 @@ viewTournament s =
         , viewSetup s
         , viewBoard s names
         , viewStandings s
+        , viewBracket s
+        ]
+
+
+viewBracket : Sel -> Html Msg
+viewBracket s =
+    div [ class "panel" ]
+        [ div [ class "row" ]
+            [ h2 [] [ text "Bracket" ]
+            , text "Qualifiés/poule :"
+            , input [ type_ "number", class "score", value s.perPool, onInput SetPerPool ] []
+            , button [ onClick GenBracket ] [ text "Générer" ]
+            , button [ class "secondary", onClick AdvanceBracket ] [ text "Avancer" ]
+            ]
+        , if List.isEmpty s.bracket then
+            p [ class "muted" ] [ text "Bracket non tiré." ]
+
+          else
+            div []
+                [ bracketColumn "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
+                , bracketColumn "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
+                ]
+        ]
+
+
+bracketColumn : String -> List BracketNode -> Html Msg
+bracketColumn title nodes =
+    if List.isEmpty nodes then
+        text ""
+
+    else
+        div []
+            (h3 [ class "muted" ] [ text title ]
+                :: List.map bracketNodeRow (List.sortBy (\n -> ( n.round, n.index )) nodes)
+            )
+
+
+bracketNodeRow : BracketNode -> Html Msg
+bracketNodeRow n =
+    let
+        side m =
+            Maybe.withDefault "—" m
+
+        result =
+            case n.winner of
+                Just w ->
+                    " → " ++ w
+
+                Nothing ->
+                    ""
+    in
+    div [ class "match" ]
+        [ span [ class "muted" ] [ text ("T" ++ String.fromInt n.round ++ " ") ]
+        , text (side n.teamA ++ " vs " ++ side n.teamB ++ result)
         ]
 
 

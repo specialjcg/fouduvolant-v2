@@ -147,6 +147,31 @@ simple, `n(n-1)/2`), ordre déterministe.
 `POST /tournaments/{id}/pools/{pool_id}/matches` → `{created:[…]}`.
 Front : bouton « Générer matchs (round-robin) » par poule.
 
+## Bracket / phase finale (`backend/crates/domain/src/bracket.rs`)
+
+Inspiré de l'original fouduvolant. Modèle event-sourced **lean** : seul le tirage
+est persisté (mini-agrégat `Bracket`, command `Draw{main_seeds, consolation_seeds}`,
+une fois). Tout l'arbre (main + consolante, tous les tours, byes, avancement) est
+**reconstruit purement** par `build_bracket(main, cons, results)`, clé = paire
+d'équipes non ordonnée. Pas de tree stocké → évite les pitfalls (id schemes,
+seeding paths) de l'original.
+
+- `next_pow2` : taille = puissance de 2 ≥ nb (byes pour combler — choix « simplifié »
+  vs barrages/pré-tours de l'original, différés).
+- `seed_slots` : seeding standard, **identique** au `standard_seeding_order` de
+  l'original (ex. taille 8 → [1,8,4,5,2,7,3,6]). Têtes de série séparées.
+- **Consolante = équipes NON qualifiées** (bracket indépendant), pas les perdants
+  du 1er tour — fidèle à l'original.
+- `App::generate_bracket(tid, per_pool)` : top `per_pool`/poule → main (seeds
+  rank-major, poules entrelacées) ; le reste → consolante. Draw + advance.
+- `App::advance_bracket(tid)` : pull idempotent — planifie tout nœud jouable
+  (2 équipes connues, pas encore programmé) en Match (pool None, format =
+  `bracket_format`). Re-jouable après chaque résultat.
+- `bracket_view(tid)` : arbre + noms. Endpoints : `POST …/bracket {per_pool}`,
+  `POST …/bracket/advance`, `GET …/bracket`. Front : tirage + avancer + affichage
+  principal/consolante.
+- Différé : barrages/pré-tours (play-in), 3e place (si taille ≥ 8).
+
 ## Scheduling (planner pur — `backend/crates/domain/src/scheduling.rs`)
 
 Port propre du `court_dispatcher` legacy. **Fonction pure**, pas de wiring ES :
