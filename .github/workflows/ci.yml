@@ -44,7 +44,9 @@ jobs:
       - name: Integration tests (PostgreSQL)
         env:
           DATABASE_URL: postgresql://fouduvolant:fouduvolant@localhost:5432/fouduvolant
-        run: cargo test -- --ignored
+        # Single-threaded: the tests share one event store and each runs
+        # migrations, which would race on table creation in parallel.
+        run: cargo test -- --ignored --test-threads=1
 
   frontend:
     name: Frontend (elm)
