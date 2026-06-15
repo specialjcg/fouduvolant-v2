@@ -67,6 +67,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/matches", post(schedule_match))
         .route("/tournaments/{id}/dispatch", post(dispatch))
         .route("/tournaments/{id}/board", get(board))
+        .route("/tournaments/{id}/standings", get(standings))
         .route("/matches/{id}/start", post(start_match))
         .route("/matches/{id}/sets", post(record_set))
         .layer(TraceLayer::new_for_http())
@@ -327,6 +328,13 @@ async fn dispatch(
 
 async fn board(State(app): State<Arc<App>>, Path(id): Path<Uuid>) -> Result<Response, ApiError> {
     Ok(Json(app.board(TournamentId(id)).await?).into_response())
+}
+
+async fn standings(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    Ok(Json(app.standings(TournamentId(id)).await?).into_response())
 }
 
 // ---- Error mapping ----

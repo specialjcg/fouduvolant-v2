@@ -14,6 +14,7 @@ pub mod matches;
 pub mod projections;
 pub mod scheduling;
 pub mod score;
+pub mod standings;
 pub mod tournament;
 
 pub use ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};

@@ -62,6 +62,9 @@ impl MatchProjection {
                         court: None,
                         manual_court: None,
                         done_order: None,
+                        winner: None,
+                        points_a: 0,
+                        points_b: 0,
                     },
                 );
             }
@@ -71,10 +74,16 @@ impl MatchProjection {
                     v.court = Some(*court_id);
                 }
             }
-            MatchEvent::SetRecorded { .. } => {}
-            MatchEvent::Completed { .. } => {
+            MatchEvent::SetRecorded { set } => {
+                if let Some(v) = self.views.get_mut(&id) {
+                    v.points_a += u16::from(set.a());
+                    v.points_b += u16::from(set.b());
+                }
+            }
+            MatchEvent::Completed { winner } => {
                 if let Some(v) = self.views.get_mut(&id) {
                     v.status = SchedStatus::Done;
+                    v.winner = Some(*winner);
                     v.done_order = Some(self.next_done);
                     self.next_done += 1;
                 }

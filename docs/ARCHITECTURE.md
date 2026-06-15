@@ -118,7 +118,19 @@ Lancer la stack complète :
 1. `cd backend && cargo run -p web` (API :3000, migrations auto)
 2. `cd frontend && python3 -m http.server 8080` → ouvrir `localhost:8080`
 
-## Read models (projections — à venir)
+## Classements poule (`backend/crates/domain/src/standings.rs`)
+
+`pool_standings(teams, results)` = pur, tiebreakers BWF dans l'ordre : **wins →
+H2H (parmi les équipes à égalité de wins) → diff de points → points marqués →
+team id**. H2H appliqué *avant* la diff, uniquement dans un groupe à égalité de
+wins (comportement de l'original). Équipes sans match incluses (0 joué).
+
+`App::standings(tid)` (replay) : enrichit `MatchView` (winner + points cumulés
+par côté via projection), groupe par poule, classe. Endpoint
+`GET /tournaments/{id}/standings` → `[{pool_id, name, rows:[…rank,wins,diff…]}]`.
+Front : tables de classement par poule, rafraîchies au poll + après score.
+
+## Read models (projections persistés Query — à venir)
 Construits par replay des events, hors agrégats :
 - `PoolStandings` — classement + tiebreakers BWF (wins → H2H → diff pts)
 - `CourtBoard` / `Schedule` — planning par terrain + prévisionnel

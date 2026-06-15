@@ -45,7 +45,16 @@ type alias Sel =
     , teamA : String
     , teamB : String
     , scores : Dict String ( String, String )
+    , standings : List PoolStandings
     }
+
+
+type alias PoolStandings =
+    { poolId : String, name : String, rows : List StandingRow }
+
+
+type alias StandingRow =
+    { name : String, rank : Int, played : Int, wins : Int, pf : Int, pa : Int, diff : Int }
 
 
 type alias Summary =
@@ -111,6 +120,7 @@ type Msg
     | CloseT
     | GotView (Result Http.Error TView)
     | GotBoard (Result Http.Error Board)
+    | GotStandings (Result Http.Error (List PoolStandings))
     | SetNewTeam String
     | AddTeam
     | SetCourts String
@@ -171,6 +181,12 @@ update msg model =
 
         GotBoard (Err e) ->
             ( { model | err = Just (httpErr e) }, Cmd.none )
+
+        GotStandings (Ok st) ->
+            ( { model | sel = Maybe.map (\s -> { s | standings = st }) model.sel }, Cmd.none )
+
+        GotStandings (Err _) ->
+            ( model, Cmd.none )
 
         SetNewTeam s ->
             ( mapSel (\s_ -> { s_ | newTeam = s }) model, Cmd.none )
@@ -309,6 +325,7 @@ mergeView prev v =
             , teamA = ""
             , teamB = ""
             , scores = Dict.empty
+            , standings = []
             }
 
 
@@ -329,7 +346,7 @@ withSel model f =
 
 openCmds : String -> String -> Cmd Msg
 openCmds api id =
-    Cmd.batch [ loadView api id, loadBoard api id ]
+    Cmd.batch [ loadView api id, loadBoard api id, loadStandings api id ]
 
 
 refresh : Model -> Cmd Msg
@@ -346,7 +363,7 @@ refreshBoard : Model -> Cmd Msg
 refreshBoard model =
     case model.sel of
         Just s ->
-            loadBoard model.api s.id
+            Cmd.batch [ loadBoard model.api s.id, loadStandings model.api s.id ]
 
         Nothing ->
             Cmd.none
@@ -369,6 +386,14 @@ loadView api id =
 loadBoard : String -> String -> Cmd Msg
 loadBoard api id =
     Http.get { url = api ++ "/tournaments/" ++ id ++ "/board", expect = Http.expectJson GotBoard boardDec }
+
+
+loadStandings : String -> String -> Cmd Msg
+loadStandings api id =
+    Http.get
+        { url = api ++ "/tournaments/" ++ id ++ "/standings"
+        , expect = Http.expectJson GotStandings (D.list poolStandingsDec)
+        }
 
 
 createTournament : String -> String -> Cmd Msg
@@ -514,6 +539,26 @@ suggDec =
     D.map2 Sugg (D.field "match_id" D.string) (D.field "needs_rest" D.bool)
 
 
+poolStandingsDec : D.Decoder PoolStandings
+poolStandingsDec =
+    D.map3 PoolStandings
+        (D.field "pool_id" D.string)
+        (D.field "name" D.string)
+        (D.field "rows" (D.list rowDec))
+
+
+rowDec : D.Decoder StandingRow
+rowDec =
+    D.map7 StandingRow
+        (D.field "name" D.string)
+        (D.field "rank" D.int)
+        (D.field "played" D.int)
+        (D.field "wins" D.int)
+        (D.field "points_for" D.int)
+        (D.field "points_against" D.int)
+        (D.field "diff" D.int)
+
+
 matchVDec : D.Decoder MatchV
 matchVDec =
     D.map5 MatchV
@@ -602,6 +647,51 @@ viewTournament s =
             ]
         , viewSetup s
         , viewBoard s names
+        , viewStandings s
+        ]
+
+
+viewStandings : Sel -> Html Msg
+viewStandings s =
+    if List.isEmpty s.standings then
+        text ""
+
+    else
+        div [ class "panel" ]
+            (h2 [] [ text "Classements" ]
+                :: List.map standingsTable s.standings
+            )
+
+
+standingsTable : PoolStandings -> Html Msg
+standingsTable ps =
+    div []
+        [ h3 [ class "muted" ] [ text ps.name ]
+        , table []
+            (tr []
+                [ th [] [ text "#" ]
+                , th [] [ text "Équipe" ]
+                , th [] [ text "J" ]
+                , th [] [ text "V" ]
+                , th [] [ text "Pts+" ]
+                , th [] [ text "Pts-" ]
+                , th [] [ text "Diff" ]
+                ]
+                :: List.map standingsRow ps.rows
+            )
+        ]
+
+
+standingsRow : StandingRow -> Html Msg
+standingsRow r =
+    tr []
+        [ td [] [ text (String.fromInt r.rank) ]
+        , td [] [ text r.name ]
+        , td [] [ text (String.fromInt r.played) ]
+        , td [] [ text (String.fromInt r.wins) ]
+        , td [] [ text (String.fromInt r.pf) ]
+        , td [] [ text (String.fromInt r.pa) ]
+        , td [] [ text (String.fromInt r.diff) ]
         ]
 
 

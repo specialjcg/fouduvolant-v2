@@ -58,6 +58,12 @@ pub struct MatchView {
     pub manual_court: Option<CourtId>,
     /// Completion order, used to find the most recent finish per court.
     pub done_order: Option<u32>,
+    /// Winner once the match is decided.
+    pub winner: Option<TeamId>,
+    /// Points scored by side A across all recorded sets.
+    pub points_a: u16,
+    /// Points scored by side B across all recorded sets.
+    pub points_b: u16,
 }
 
 impl MatchView {
@@ -481,6 +487,9 @@ mod tests {
             court: None,
             manual_court: None,
             done_order: None,
+            winner: None,
+            points_a: 0,
+            points_b: 0,
         }
     }
 
@@ -534,6 +543,9 @@ mod tests {
             court: Some(court(1)),
             manual_court: None,
             done_order: Some(1),
+            winner: Some(team(10)),
+            points_a: 21,
+            points_b: 11,
         };
         let btb = pending_match(1, p, team(10), team(20)); // reuses team 10
         let fresh = pending_match(2, p, team(30), team(31));
@@ -560,6 +572,9 @@ mod tests {
             court: Some(court(1)),
             manual_court: None,
             done_order: Some(1),
+            winner: Some(team(10)),
+            points_a: 21,
+            points_b: 11,
         };
         let only = pending_match(1, p, team(10), team(20));
         let matches = vec![just_done, only.clone()];

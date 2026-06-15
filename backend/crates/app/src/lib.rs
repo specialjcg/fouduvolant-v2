@@ -20,6 +20,7 @@ use domain::matches::{Match, MatchCommand, MatchError, MatchEvent};
 use domain::projections::MatchProjection;
 use domain::scheduling::{plan, CourtPlan, MatchView};
 use domain::score::MatchFormat;
+use domain::standings::{pool_standings, MatchResult};
 use domain::tournament::{
     Phase, Pool as DomainPool, Tournament, TournamentCommand, TournamentError, TournamentEvent,
 };
@@ -63,6 +64,38 @@ pub struct TournamentView {
     pub pool_format: MatchFormat,
     /// Bracket match format.
     pub bracket_format: MatchFormat,
+}
+
+/// One row of a pool's ranked standings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandingRow {
+    /// Team id.
+    pub team: TeamId,
+    /// Team display name.
+    pub name: String,
+    /// Final rank within the pool (1-based).
+    pub rank: u32,
+    /// Matches played.
+    pub played: u32,
+    /// Matches won.
+    pub wins: u32,
+    /// Points scored.
+    pub points_for: u32,
+    /// Points conceded.
+    pub points_against: u32,
+    /// Point difference.
+    pub diff: i32,
+}
+
+/// A pool's ranked standings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolStandingsView {
+    /// Pool id.
+    pub pool_id: PoolId,
+    /// Pool display name.
+    pub name: String,
+    /// Ranked rows.
+    pub rows: Vec<StandingRow>,
 }
 
 /// The live board for a tournament: court plans plus the underlying matches.
@@ -351,6 +384,68 @@ impl App {
             courts: plans,
             matches,
         })
+    }
+
+    /// Compute ranked standings for every pool of a tournament.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a database or deserialization failure.
+    pub async fn standings(
+        &self,
+        tournament_id: TournamentId,
+    ) -> Result<Vec<PoolStandingsView>, AppError> {
+        let Some(view) = self.tournament_view(tournament_id).await? else {
+            return Ok(Vec::new());
+        };
+        let names: std::collections::HashMap<TeamId, String> = view
+            .teams
+            .iter()
+            .map(|t| (t.id, t.name.clone()))
+            .collect();
+
+        let matches = self.match_projection().await?;
+        let done: Vec<MatchView> = matches
+            .views()
+            .into_iter()
+            .filter(|v| v.tournament == tournament_id && v.winner.is_some())
+            .collect();
+
+        let mut out = Vec::with_capacity(view.pools.len());
+        for pool in &view.pools {
+            let results: Vec<MatchResult> = done
+                .iter()
+                .filter(|v| v.pool == Some(pool.id))
+                .map(|v| MatchResult {
+                    team_a: v.team_a,
+                    team_b: v.team_b,
+                    winner: v.winner.expect("filtered to winners"),
+                    points_a: u32::from(v.points_a),
+                    points_b: u32::from(v.points_b),
+                })
+                .collect();
+
+            let rows = pool_standings(&pool.teams, &results)
+                .into_iter()
+                .enumerate()
+                .map(|(i, s)| StandingRow {
+                    team: s.team,
+                    name: names.get(&s.team).cloned().unwrap_or_default(),
+                    rank: i as u32 + 1,
+                    played: s.played,
+                    wins: s.wins,
+                    points_for: s.points_for,
+                    points_against: s.points_against,
+                    diff: s.diff(),
+                })
+                .collect();
+
+            out.push(PoolStandingsView {
+                pool_id: pool.id,
+                name: pool.name.clone(),
+                rows,
+            });
+        }
+        Ok(out)
     }
 
     /// Replay a tournament's events in sequence order.
