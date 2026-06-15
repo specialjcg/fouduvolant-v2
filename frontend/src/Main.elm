@@ -48,7 +48,17 @@ type alias Sel =
     , standings : List PoolStandings
     , bracket : List BracketNode
     , perPool : String
+    , step : Step
+    , numPools : String
     }
+
+
+type Step
+    = StepTeams
+    | StepPools
+    | StepBoard
+    | StepFinals
+    | StepRanking
 
 
 type alias BracketNode =
@@ -152,9 +162,15 @@ type Msg
     | AdvanceBracket
     | SetNewTeam String
     | AddTeam
+    | DeleteTeam String
+    | GoStep Step
+    | SetNumPools String
+    | AutoPools
+    | StartPools
+    | StartFinals
+    | IncScore String Int Int
     | SetCourts String
     | SaveCourts
-    | CreatePool
     | GenPoolMatches String
     | SetTeamA String
     | SetTeamB String
@@ -264,23 +280,60 @@ update msg model =
                             ( model, Cmd.none )
                 )
 
-        CreatePool ->
+        GenPoolMatches poolId ->
+            withSel model (\s -> ( model, genPoolMatches model.api s.id poolId ))
+
+        DeleteTeam teamId ->
+            withSel model (\s -> ( model, deleteTeam model.api s.id teamId ))
+
+        GoStep st ->
+            ( mapSel (\s -> { s | step = st }) model, Cmd.none )
+
+        SetNumPools v ->
+            ( mapSel (\s -> { s | numPools = v }) model, Cmd.none )
+
+        AutoPools ->
             withSel model
                 (\s ->
-                    if List.isEmpty s.view.teams then
+                    let
+                        n =
+                            max 1 (Maybe.withDefault 2 (String.toInt s.numPools))
+                    in
+                    if List.length s.view.teams < n then
                         ( model, Cmd.none )
 
                     else
-                        ( model
-                        , createPool model.api
-                            s.id
-                            ("Poule " ++ String.fromInt (List.length s.view.pools + 1))
-                            (List.map .id s.view.teams)
-                        )
+                        ( model, postPools model.api s.id (buildPools n s.view.teams) )
                 )
 
-        GenPoolMatches poolId ->
-            withSel model (\s -> ( model, genPoolMatches model.api s.id poolId ))
+        StartPools ->
+            withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-pools") (E.object []) ))
+
+        StartFinals ->
+            withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-bracket") (E.object []) ))
+
+        IncScore matchId which delta ->
+            ( mapSel
+                (\s ->
+                    let
+                        ( a, b ) =
+                            Maybe.withDefault ( "", "" ) (Dict.get matchId s.scores)
+
+                        clamp v =
+                            String.fromInt (Basics.max 0 (Basics.min 30 (Maybe.withDefault 0 (String.toInt v) + delta)))
+
+                        pair =
+                            if which == 0 then
+                                ( clamp a, b )
+
+                            else
+                                ( a, clamp b )
+                    in
+                    { s | scores = Dict.insert matchId pair s.scores }
+                )
+                model
+            , Cmd.none
+            )
 
         SetTeamA s ->
             ( mapSel (\s_ -> { s_ | teamA = s }) model, Cmd.none )
@@ -375,6 +428,8 @@ mergeView prev v =
             , standings = []
             , bracket = []
             , perPool = "2"
+            , step = StepTeams
+            , numPools = "2"
             }
 
 
@@ -497,18 +552,53 @@ advBracket api tid =
         }
 
 
-createPool : String -> String -> String -> List String -> Cmd Msg
-createPool api tid name teams =
+deleteTeam : String -> String -> String -> Cmd Msg
+deleteTeam api tid teamId =
+    Http.request
+        { method = "DELETE"
+        , headers = []
+        , url = api ++ "/tournaments/" ++ tid ++ "/teams/" ++ teamId
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever Mutated
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+{-| Distribute teams round-robin into `n` balanced pools (sizes differ by ≤1). -}
+buildPools : Int -> List Team -> List ( String, List String )
+buildPools n teams =
+    let
+        indexed =
+            List.indexedMap Tuple.pair teams
+    in
+    List.range 0 (n - 1)
+        |> List.map
+            (\k ->
+                let
+                    members =
+                        indexed
+                            |> List.filter (\( i, _ ) -> modBy n i == k)
+                            |> List.map (\( _, t ) -> t.id)
+                in
+                ( "Poule " ++ String.fromChar (Char.fromCode (65 + k)), members )
+            )
+
+
+postPools : String -> String -> List ( String, List String ) -> Cmd Msg
+postPools api tid pools =
     postEmpty api
         ("/tournaments/" ++ tid ++ "/pools")
         (E.object
             [ ( "pools"
-              , E.list identity
-                    [ E.object
-                        [ ( "name", E.string name )
-                        , ( "teams", E.list E.string teams )
-                        ]
-                    ]
+              , E.list
+                    (\( name, teams ) ->
+                        E.object
+                            [ ( "name", E.string name )
+                            , ( "teams", E.list E.string teams )
+                            ]
+                    )
+                    pools
               )
             ]
         )
@@ -723,6 +813,23 @@ viewTournament s =
     let
         names =
             teamNames s.view.teams
+
+        content =
+            case s.step of
+                StepTeams ->
+                    viewTeams s
+
+                StepPools ->
+                    viewPools s
+
+                StepBoard ->
+                    viewBoard s names
+
+                StepFinals ->
+                    viewBracket s
+
+                StepRanking ->
+                    viewStandings s
     in
     div []
         [ div [ class "panel" ]
@@ -732,10 +839,93 @@ viewTournament s =
                 , text (String.fromInt (List.length s.view.courts) ++ " terrains")
                 ]
             ]
-        , viewSetup s
-        , viewBoard s names
-        , viewStandings s
-        , viewBracket s
+        , stepper s.step
+        , content
+        ]
+
+
+stepper : Step -> Html Msg
+stepper active =
+    let
+        item st label =
+            button
+                [ class
+                    (if st == active then
+                        "step active"
+
+                     else
+                        "step"
+                    )
+                , onClick (GoStep st)
+                ]
+                [ text label ]
+    in
+    div [ class "stepper" ]
+        [ item StepTeams "1 · Équipes"
+        , item StepPools "2 · Poules"
+        , item StepBoard "3 · Terrains"
+        , item StepFinals "4 · Finales"
+        , item StepRanking "5 · Classement"
+        ]
+
+
+viewTeams : Sel -> Html Msg
+viewTeams s =
+    div [ class "panel" ]
+        [ h2 [] [ text "Équipes" ]
+        , div [ class "row" ]
+            [ input [ placeholder "Nom d'équipe", value s.newTeam, onInput SetNewTeam ] []
+            , button [ onClick AddTeam ] [ text "+ Équipe" ]
+            ]
+        , if List.isEmpty s.view.teams then
+            p [ class "muted" ] [ text "Aucune équipe." ]
+
+          else
+            div [] (List.map teamRow s.view.teams)
+        , div [ class "row", Html.Attributes.style "margin-top" "1rem" ]
+            [ button [ onClick (GoStep StepPools), disabled (List.length s.view.teams < 2) ]
+                [ text "Suivant : Poules →" ]
+            ]
+        ]
+
+
+teamRow : Team -> Html Msg
+teamRow t =
+    div [ class "match row", Html.Attributes.style "justify-content" "space-between" ]
+        [ span [] [ text t.name ]
+        , button [ class "secondary", onClick (DeleteTeam t.id) ] [ text "✕" ]
+        ]
+
+
+viewPools : Sel -> Html Msg
+viewPools s =
+    div [ class "panel" ]
+        [ h2 [] [ text "Poules & terrains" ]
+        , div [ class "row" ]
+            [ text "Terrains :"
+            , input [ type_ "number", class "score", value s.courts, onInput SetCourts ] []
+            , button [ class "secondary", onClick SaveCourts ] [ text "Définir" ]
+            ]
+        , h3 [] [ text "Répartition" ]
+        , div [ class "row" ]
+            [ text "Nombre de poules :"
+            , input [ type_ "number", class "score", value s.numPools, onInput SetNumPools ] []
+            , button [ onClick AutoPools, disabled (List.length s.view.teams < 2) ]
+                [ text "Répartir automatiquement" ]
+            ]
+        , if List.isEmpty s.view.pools then
+            p [ class "muted" ] [ text "Aucune poule. Répartis les équipes ci-dessus." ]
+
+          else
+            div [] (List.map (poolRow (teamNames s.view.teams)) s.view.pools)
+        , div [ class "row", Html.Attributes.style "margin-top" "1rem" ]
+            [ button
+                [ onClick StartPools
+                , disabled (List.isEmpty s.view.pools || List.isEmpty s.view.courts)
+                ]
+                [ text "Lancer les poules" ]
+            , button [ class "secondary", onClick (GoStep StepBoard) ] [ text "Terrains →" ]
+            ]
         ]
 
 
@@ -847,52 +1037,16 @@ standingsRow r =
         ]
 
 
-viewSetup : Sel -> Html Msg
-viewSetup s =
-    div [ class "panel" ]
-        [ h2 [] [ text "Configuration" ]
-        , div [ class "row" ]
-            [ input [ placeholder "Nom d'équipe", value s.newTeam, onInput SetNewTeam ] []
-            , button [ onClick AddTeam ] [ text "+ Équipe" ]
+poolRow : Dict String String -> PoolV -> Html Msg
+poolRow names p =
+    div [ class "match" ]
+        [ div [ class "row", Html.Attributes.style "justify-content" "space-between" ]
+            [ span [ Html.Attributes.style "font-weight" "600" ] [ text p.name ]
+            , button [ onClick (GenPoolMatches p.id) ] [ text "Générer matchs" ]
             ]
-        , div [ class "row" ]
-            [ text "Terrains :"
-            , input [ type_ "number", class "score", value s.courts, onInput SetCourts ] []
-            , button [ class "secondary", onClick SaveCourts ] [ text "Définir" ]
-            ]
-        , div [ class "row" ]
-            [ teamSelect s.teamA SetTeamA s.view.teams
-            , text "vs"
-            , teamSelect s.teamB SetTeamB s.view.teams
-            , button [ onClick ScheduleMatch, disabled (s.teamA == "" || s.teamB == "" || s.teamA == s.teamB) ]
-                [ text "+ Match" ]
-            ]
-        , h3 [ class "muted" ] [ text "Poules" ]
-        , div [ class "row" ]
-            [ button [ class "secondary", onClick CreatePool, disabled (List.isEmpty s.view.teams) ]
-                [ text "Créer poule (toutes les équipes)" ]
-            ]
-        , div [] (List.map poolRow s.view.pools)
+        , div [ class "muted", Html.Attributes.style "font-size" ".85rem" ]
+            [ text (String.join " · " (List.map (nameOf names) p.teams)) ]
         ]
-
-
-poolRow : PoolV -> Html Msg
-poolRow p =
-    div [ class "match row" ]
-        [ span [] [ text p.name ]
-        , span [ class "muted" ] [ text (String.fromInt (List.length p.teams) ++ " équipes") ]
-        , button [ onClick (GenPoolMatches p.id) ] [ text "Générer matchs (round-robin)" ]
-        ]
-
-
-teamSelect : String -> (String -> Msg) -> List Team -> Html Msg
-teamSelect selected toMsg teams =
-    Html.select [ onInput toMsg ]
-        (option [ value "" ] [ text "— équipe —" ]
-            :: List.map
-                (\t -> option [ value t.id, Html.Attributes.selected (t.id == selected) ] [ text t.name ])
-                teams
-        )
 
 
 viewBoard : Sel -> Dict String String -> Html Msg
@@ -1023,11 +1177,19 @@ scoreEntry s matchId =
         ( a, b ) =
             Maybe.withDefault ( "", "" ) (Dict.get matchId s.scores)
     in
-    div [ class "row" ]
-        [ input [ class "score", type_ "number", placeholder "0", value a, onInput (SetScore matchId 0) ] []
-        , text "-"
-        , input [ class "score", type_ "number", placeholder "0", value b, onInput (SetScore matchId 1) ] []
+    div [ class "score-entry" ]
+        [ scoreLine matchId 0 a
+        , scoreLine matchId 1 b
         , button [ class "secondary", onClick (SubmitScore matchId) ] [ text "Valider" ]
+        ]
+
+
+scoreLine : String -> Int -> String -> Html Msg
+scoreLine matchId which v =
+    div [ class "row stepper-line" ]
+        [ button [ class "step-btn", onClick (IncScore matchId which -1) ] [ text "−" ]
+        , input [ class "score", type_ "number", placeholder "0", value v, onInput (SetScore matchId which) ] []
+        , button [ class "step-btn", onClick (IncScore matchId which 1) ] [ text "+" ]
         ]
 
 

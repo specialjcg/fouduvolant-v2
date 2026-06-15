@@ -81,7 +81,21 @@
     .node.preview { opacity:.6; }
     .node button { padding:.35rem .55rem; font-size:.78rem; width:100%; }
     .node .row { gap:.25rem; flex-wrap:nowrap; }
-    .node input.score { width:2.7rem; padding:.35rem .25rem; }
+    .node input.score { width:2.6rem; padding:.35rem .2rem; }
+
+    /* stepper nav */
+    .stepper { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:1rem; }
+    button.step { background:var(--surface); color:var(--muted); border:1px solid var(--line);
+      font-size:.8rem; padding:.45rem .8rem; box-shadow:none; }
+    button.step:hover { background:var(--surface-2); transform:none; box-shadow:none; }
+    button.step.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+
+    /* score steppers */
+    .score-entry { display:flex; flex-direction:column; gap:.25rem; }
+    .stepper-line { gap:.2rem; flex-wrap:nowrap; align-items:center; }
+    button.step-btn { padding:.2rem .45rem; font-size:1rem; line-height:1; width:auto;
+      background:var(--surface-2); color:var(--fg); border:1px solid var(--line); box-shadow:none; }
+    button.step-btn:hover { background:#e7ecf3; transform:none; box-shadow:none; }
 
     .match { padding:.55rem .65rem; border-radius:var(--r-md); background:var(--surface-2);
       border:1px solid var(--line); margin:.35rem 0; font-size:.9rem; }
