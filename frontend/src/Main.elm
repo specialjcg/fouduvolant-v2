@@ -23,7 +23,7 @@ import Time
 
 
 type alias Flags =
-    { apiBase : String }
+    { apiBase : String, open : String }
 
 
 type alias Model =
@@ -115,7 +115,14 @@ init flags =
       , newName = ""
       , err = Nothing
       }
-    , loadTournaments flags.apiBase
+    , Cmd.batch
+        [ loadTournaments flags.apiBase
+        , if flags.open == "" then
+            Cmd.none
+
+          else
+            openCmds flags.apiBase flags.open
+        ]
     )
 
 
@@ -650,7 +657,7 @@ view : Model -> Html Msg
 view model =
     div []
         [ header []
-            [ h1 [] [ text "🏸 Fou du Volant" ]
+            [ h1 [] [ text "🏸 Fou du ", span [ class "accent" ] [ text "Volant" ] ]
             , case model.sel of
                 Just _ ->
                     button [ class "secondary", onClick CloseT ] [ text "← Tournois" ]

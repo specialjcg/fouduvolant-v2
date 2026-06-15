@@ -10,7 +10,7 @@
 //! is empty for now.
 
 pub use cqrs_es::AggregateError;
-use postgres_es::{default_postgress_pool, postgres_cqrs, PostgresCqrs};
+use postgres_es::{default_postgress_pool, postgres_snapshot_cqrs, PostgresCqrs};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
 
@@ -130,6 +130,10 @@ pub struct BracketNodeView {
 /// Idempotent event-store schema, applied by [`App::run_migrations`].
 const MIGRATION_SQL: &str = include_str!("../../../db/init.sql");
 
+/// Take an aggregate snapshot every N events (rehydration reads the snapshot
+/// plus the events since, rather than the whole stream).
+const SNAPSHOT_EVERY: usize = 20;
+
 /// Top-level application: one event store, one CQRS framework per aggregate.
 pub struct App {
     pool: Pool<Postgres>,
@@ -153,9 +157,11 @@ impl App {
     /// Build the framework over an existing pool (useful for tests).
     #[must_use]
     pub fn from_pool(pool: Pool<Postgres>) -> Self {
-        let tournaments = postgres_cqrs(pool.clone(), vec![], ());
-        let matches = postgres_cqrs(pool.clone(), vec![], ());
-        let brackets = postgres_cqrs(pool.clone(), vec![], ());
+        // Snapshot store: rehydrate from a periodic snapshot + the events since,
+        // instead of replaying the whole stream on every command.
+        let tournaments = postgres_snapshot_cqrs(pool.clone(), vec![], SNAPSHOT_EVERY, ());
+        let matches = postgres_snapshot_cqrs(pool.clone(), vec![], SNAPSHOT_EVERY, ());
+        let brackets = postgres_snapshot_cqrs(pool.clone(), vec![], SNAPSHOT_EVERY, ());
         Self {
             pool,
             tournaments,

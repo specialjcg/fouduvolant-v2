@@ -4,37 +4,167 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fou du Volant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Hanken+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet" />
   <style>
-    :root { --bg:#0f1419; --panel:#1b232d; --line:#2c3a47; --fg:#e6edf3; --muted:#8b99a6;
-            --accent:#3fb950; --warn:#d29922; --danger:#f85149; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); }
-    header { padding:1rem 1.5rem; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:1rem; }
-    header h1 { font-size:1.2rem; margin:0; }
-    main { padding:1.5rem; max-width:1100px; margin:0 auto; }
-    .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:1rem; margin-bottom:1rem; }
-    .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
-    .courts { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:1rem; }
-    .court { background:#10171f; border:1px solid var(--line); border-radius:8px; padding:.75rem; }
-    .court h3 { margin:0 0 .5rem; font-size:.95rem; color:var(--muted); }
-    .match { padding:.4rem .5rem; border-radius:6px; background:#1b232d; margin:.3rem 0; }
-    .current { border-left:3px solid var(--accent); }
-    .next { border-left:3px solid var(--warn); }
-    .preview { opacity:.65; font-size:.85rem; }
-    .rest { color:var(--warn); }
-    button { background:var(--accent); color:#06210d; border:0; border-radius:6px; padding:.4rem .7rem;
-             font-weight:600; cursor:pointer; }
-    button.secondary { background:#30404f; color:var(--fg); }
-    button:disabled { opacity:.4; cursor:not-allowed; }
-    input, select { background:#0d1117; color:var(--fg); border:1px solid var(--line);
-                    border-radius:6px; padding:.4rem .5rem; }
-    input.score { width:3.2rem; text-align:center; }
-    a { color:var(--accent); cursor:pointer; }
-    .err { color:var(--danger); }
-    .muted { color:var(--muted); }
-    .pill { font-size:.75rem; padding:.1rem .5rem; border-radius:10px; background:#30404f; }
-    table { width:100%; border-collapse:collapse; }
-    td, th { text-align:left; padding:.3rem .4rem; border-bottom:1px solid var(--line); font-size:.9rem; }
+    :root {
+      --ink:   #0b100e;
+      --ink2:  #0e1512;
+      --panel: #141d18;
+      --panel2:#18231d;
+      --line:  #26342b;
+      --fg:    #eef3ee;
+      --muted: #82938a;
+      --lime:  #c8ff3c;
+      --lime-d:#a6e000;
+      --amber: #f6b73c;
+      --clay:  #ff6a4d;
+      --shadow: 0 18px 40px -22px rgba(0,0,0,.85);
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; background: var(--ink); }
+    body {
+      margin: 0;
+      font-family: "Hanken Grotesk", system-ui, sans-serif;
+      color: var(--fg);
+      background:
+        radial-gradient(120% 80% at 85% -10%, rgba(200,255,60,.07), transparent 60%),
+        radial-gradient(90% 70% at -10% 110%, rgba(80,200,255,.05), transparent 55%),
+        linear-gradient(var(--ink), var(--ink2));
+      background-attachment: fixed;
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    /* faint court-line texture overlay */
+    body::before {
+      content: "";
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(120% 100% at 50% 0%, #000 40%, transparent 90%);
+    }
+
+    header {
+      position: relative; z-index: 1;
+      display: flex; align-items: center; gap: 1rem;
+      padding: 1.1rem 1.6rem 1rem;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(20,29,24,.9), rgba(20,29,24,.4));
+      backdrop-filter: blur(6px);
+    }
+    header::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+      background: linear-gradient(90deg, var(--lime), transparent 45%);
+    }
+    header h1 {
+      margin: 0; font-family: "Bebas Neue", sans-serif; font-weight: 400;
+      font-size: 1.75rem; letter-spacing: .06em; line-height: 1;
+    }
+    header h1 .accent { color: var(--lime); }
+
+    main {
+      position: relative; z-index: 1;
+      padding: 1.6rem; max-width: 1140px; margin: 0 auto;
+      animation: rise .5s cubic-bezier(.2,.7,.2,1) both;
+    }
+    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+    h2 {
+      font-family: "Bebas Neue", sans-serif; font-weight: 400;
+      font-size: 1.5rem; letter-spacing: .05em; margin: 0;
+    }
+    h3 { font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; margin: .2rem 0 .6rem; font-weight: 700; }
+
+    .panel {
+      position: relative;
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      margin-bottom: 1.1rem;
+      box-shadow: var(--shadow);
+    }
+    .panel::before {
+      content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px;
+      border-radius: 3px; background: linear-gradient(var(--lime), var(--lime-d));
+      opacity: .5;
+    }
+
+    .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+    h2 + .row, .row + .row { margin-top: .8rem; }
+
+    /* COURTS — scoreboard tiles */
+    .courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; margin-top: .9rem; }
+    .court {
+      position: relative; overflow: hidden;
+      background: radial-gradient(140% 90% at 50% -20%, rgba(200,255,60,.06), transparent 60%), #0d1410;
+      border: 1px solid var(--line); border-radius: 12px; padding: .85rem;
+    }
+    .court::before {
+      content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+      background: linear-gradient(90deg, var(--lime), transparent);
+    }
+    .court h3 { color: var(--muted); display: flex; align-items: center; gap: .4rem; }
+
+    .match {
+      padding: .5rem .6rem; border-radius: 8px; background: #121a15;
+      border: 1px solid var(--line); margin: .35rem 0; font-size: .92rem;
+    }
+    .match.current { border-color: rgba(200,255,60,.5); background: linear-gradient(90deg, rgba(200,255,60,.08), #121a15 60%); }
+    .match.next { border-left: 3px solid var(--amber); }
+    .match.preview { opacity: .58; font-size: .82rem; }
+    .rest { color: var(--amber); font-weight: 700; }
+
+    button {
+      font-family: "Hanken Grotesk", sans-serif; font-weight: 800;
+      letter-spacing: .02em; font-size: .82rem;
+      background: var(--lime); color: #0c1306; border: 0; border-radius: 8px;
+      padding: .5rem .8rem; cursor: pointer;
+      transition: transform .08s ease, box-shadow .15s ease, background .15s ease;
+      box-shadow: 0 0 0 0 rgba(200,255,60,.0);
+    }
+    button:hover { transform: translateY(-1px); box-shadow: 0 8px 20px -8px rgba(200,255,60,.6); }
+    button:active { transform: translateY(0) scale(.98); }
+    button.secondary { background: #243029; color: var(--fg); }
+    button.secondary:hover { background: #2c3b32; box-shadow: none; }
+    button:disabled { opacity: .35; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    input, select {
+      font-family: inherit; font-size: .9rem; color: var(--fg);
+      background: #0b110d; border: 1px solid var(--line); border-radius: 8px;
+      padding: .5rem .6rem; transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--lime); box-shadow: 0 0 0 3px rgba(200,255,60,.15); }
+    input.score { width: 3.4rem; text-align: center; font-family: "Bebas Neue", sans-serif; font-size: 1.15rem; letter-spacing: .04em; }
+
+    a { color: var(--lime); cursor: pointer; text-decoration: none; font-weight: 700; }
+    a:hover { text-decoration: underline; }
+
+    .err { color: #06210d; background: var(--clay); border: 0; font-weight: 700; }
+    .err::before { background: #7a1c0e; opacity: 1; }
+    .muted { color: var(--muted); }
+
+    .pill {
+      font-family: "Bebas Neue", sans-serif; font-size: .8rem; letter-spacing: .07em;
+      padding: .12rem .55rem; border-radius: 999px;
+      background: #243029; color: var(--lime); border: 1px solid var(--line);
+      text-transform: uppercase;
+    }
+
+    table { width: 100%; border-collapse: collapse; margin-top: .3rem; }
+    th {
+      text-align: left; padding: .45rem .5rem; font-size: .72rem; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line);
+    }
+    td { padding: .45rem .5rem; border-bottom: 1px solid rgba(38,52,43,.6); font-size: .92rem; }
+    tr:first-child td:first-child { font-family: "Bebas Neue", sans-serif; }
+    tbody tr:hover, table tr:hover { background: rgba(200,255,60,.03); }
+
+    /* clickable tournament rows */
+    .match.row a { font-size: 1.05rem; }
   </style>
 </head>
 <body>
@@ -45,7 +175,10 @@
     var apiBase = (location.search.match(/[?&]api=([^&]+)/) || [])[1];
     Elm.Main.init({
       node: document.getElementById("app"),
-      flags: { apiBase: apiBase ? decodeURIComponent(apiBase) : "" }
+      flags: {
+        apiBase: apiBase ? decodeURIComponent(apiBase) : "",
+        open: location.hash.replace(/^#/, "")
+      }
     });
   </script>
 </body>
