@@ -58,7 +58,10 @@ async fn main() {
 fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/tournaments", get(list_tournaments).post(create_tournament))
-        .route("/tournaments/{id}", get(get_tournament))
+        .route(
+            "/tournaments/{id}",
+            get(get_tournament).delete(delete_tournament),
+        )
         .route("/tournaments/{id}/teams", post(register_team))
         .route("/tournaments/{id}/teams/import", post(import_teams))
         .route("/tournaments/{id}/teams/{team_id}", axum::routing::delete(remove_team))
@@ -213,6 +216,14 @@ async fn get_tournament(
         Some(view) => Ok(Json(view).into_response()),
         None => Err(ApiError::not_found("tournament")),
     }
+}
+
+async fn delete_tournament(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    app.delete_tournament(TournamentId(id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn register_team(

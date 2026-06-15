@@ -128,6 +128,8 @@ type alias MatchV =
     , status : String
     , court : Maybe String
     , doneOrder : Maybe Int
+    , pointsA : Int
+    , pointsB : Int
     }
 
 
@@ -160,6 +162,8 @@ type Msg
     | CreateTournament
     | Created (Result Http.Error String)
     | OpenT String
+    | DeleteTournament String
+    | Deleted (Result Http.Error ())
     | CloseT
     | GotView (Result Http.Error TView)
     | GotBoard (Result Http.Error Board)
@@ -180,7 +184,6 @@ type Msg
     | AutoPools
     | StartPools
     | StartFinals
-    | IncScore String Int Int
     | SetCourts String
     | SaveCourts
     | GenPoolMatches String
@@ -224,6 +227,12 @@ update msg model =
 
         OpenT id ->
             ( model, openCmds model.api id )
+
+        DeleteTournament id ->
+            ( model, deleteTournament model.api id )
+
+        Deleted _ ->
+            ( model, loadTournaments model.api )
 
         CloseT ->
             ( { model | sel = Nothing }, loadTournaments model.api )
@@ -360,28 +369,6 @@ update msg model =
         StartFinals ->
             withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-bracket") (E.object []) ))
 
-        IncScore matchId which delta ->
-            ( mapSel
-                (\s ->
-                    let
-                        ( a, b ) =
-                            Maybe.withDefault ( "", "" ) (Dict.get matchId s.scores)
-
-                        clamp v =
-                            String.fromInt (Basics.max 0 (Basics.min 30 (Maybe.withDefault 0 (String.toInt v) + delta)))
-
-                        pair =
-                            if which == 0 then
-                                ( clamp a, b )
-
-                            else
-                                ( a, clamp b )
-                    in
-                    { s | scores = Dict.insert matchId pair s.scores }
-                )
-                model
-            , Cmd.none
-            )
 
         SetTeamA s ->
             ( mapSel (\s_ -> { s_ | teamA = s }) model, Cmd.none )
@@ -535,6 +522,19 @@ refreshBoard model =
 loadTournaments : String -> Cmd Msg
 loadTournaments api =
     Http.get { url = api ++ "/tournaments", expect = Http.expectJson GotTournaments (D.list summaryDec) }
+
+
+deleteTournament : String -> String -> Cmd Msg
+deleteTournament api id =
+    Http.request
+        { method = "DELETE"
+        , headers = []
+        , url = api ++ "/tournaments/" ++ id
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever Deleted
+        , timeout = Nothing
+        , tracker = Nothing
+        }
 
 
 loadView : String -> String -> Cmd Msg
@@ -814,13 +814,15 @@ rowDec =
 
 matchVDec : D.Decoder MatchV
 matchVDec =
-    D.map6 MatchV
+    D.map8 MatchV
         (D.field "id" D.string)
         (D.field "team_a" D.string)
         (D.field "team_b" D.string)
         (D.field "status" D.string)
         (D.field "court" (D.nullable D.string))
         (D.field "done_order" (D.nullable D.int))
+        (D.field "points_a" D.int)
+        (D.field "points_b" D.int)
 
 
 
@@ -879,9 +881,12 @@ viewList model =
 
 tournamentRow : Summary -> Html Msg
 tournamentRow t =
-    div [ class "match row" ]
-        [ a [ onClick (OpenT t.id) ] [ text t.name ]
-        , span [ class "pill" ] [ text t.phase ]
+    div [ class "match row", Html.Attributes.style "justify-content" "space-between" ]
+        [ div [ class "row" ]
+            [ a [ onClick (OpenT t.id) ] [ text t.name ]
+            , span [ class "pill" ] [ text t.phase ]
+            ]
+        , button [ class "secondary", onClick (DeleteTournament t.id) ] [ text "✕" ]
         ]
 
 
@@ -1035,7 +1040,7 @@ viewPools s =
                         |> Maybe.map .court
             in
             div []
-                (List.map (\p -> poolRow names s.view.courts (assignedOf p.id) p) s.view.pools)
+                (List.map (\p -> poolRow names s.view.courts s.board.matches (assignedOf p.id) p) s.view.pools)
         , div [ class "row", Html.Attributes.style "margin-top" "1rem" ]
             [ button
                 [ onClick StartPools
@@ -1155,8 +1160,8 @@ standingsRow r =
         ]
 
 
-poolRow : Dict String String -> List String -> Maybe String -> PoolV -> Html Msg
-poolRow names courts assigned p =
+poolRow : Dict String String -> List String -> List MatchV -> Maybe String -> PoolV -> Html Msg
+poolRow names courts matches assigned p =
     div [ class "match" ]
         [ div [ class "row", Html.Attributes.style "justify-content" "space-between" ]
             [ span [ Html.Attributes.style "font-weight" "600" ] [ text p.name ]
@@ -1165,9 +1170,70 @@ poolRow names courts assigned p =
                 , button [ onClick (GenPoolMatches p.id) ] [ text "Générer matchs" ]
                 ]
             ]
-        , div [ class "muted", Html.Attributes.style "font-size" ".85rem" ]
-            [ text (String.join " · " (List.map (nameOf names) p.teams)) ]
+        , poolMatrix names matches p
         ]
+
+
+{-| Cross table of a pool's matches (équipe × équipe), score in each cell. -}
+poolMatrix : Dict String String -> List MatchV -> PoolV -> Html Msg
+poolMatrix names matches p =
+    if List.length p.teams < 2 then
+        text ""
+
+    else
+        table [ Html.Attributes.style "margin-top" ".5rem" ]
+            (tr []
+                (th [] [ text "" ]
+                    :: List.map (\t -> th [] [ text (shortName (nameOf names t)) ]) p.teams
+                )
+                :: List.map (matrixRow names matches p.teams) p.teams
+            )
+
+
+matrixRow : Dict String String -> List MatchV -> List String -> String -> Html Msg
+matrixRow names matches teams ti =
+    tr []
+        (td [ Html.Attributes.style "font-weight" "600" ] [ text (nameOf names ti) ]
+            :: List.map
+                (\tj ->
+                    td [ Html.Attributes.style "text-align" "center" ]
+                        [ text
+                            (if ti == tj then
+                                "—"
+
+                             else
+                                scoreBetween matches ti tj
+                            )
+                        ]
+                )
+                teams
+        )
+
+
+scoreBetween : List MatchV -> String -> String -> String
+scoreBetween matches i j =
+    case List.head (List.filter (\m -> ( m.teamA, m.teamB ) == ( i, j ) || ( m.teamA, m.teamB ) == ( j, i )) matches) of
+        Just m ->
+            if m.pointsA == 0 && m.pointsB == 0 && m.status /= "Done" then
+                ""
+
+            else if m.teamA == i then
+                String.fromInt m.pointsA ++ "-" ++ String.fromInt m.pointsB
+
+            else
+                String.fromInt m.pointsB ++ "-" ++ String.fromInt m.pointsA
+
+        Nothing ->
+            ""
+
+
+shortName : String -> String
+shortName n =
+    if String.length n <= 10 then
+        n
+
+    else
+        String.left 9 n ++ "…"
 
 
 courtSelect : List String -> Maybe String -> String -> Html Msg
@@ -1311,19 +1377,11 @@ scoreEntry s matchId =
         ( a, b ) =
             Maybe.withDefault ( "", "" ) (Dict.get matchId s.scores)
     in
-    div [ class "score-entry" ]
-        [ scoreLine matchId 0 a
-        , scoreLine matchId 1 b
-        , button [ class "secondary", onClick (SubmitScore matchId) ] [ text "Valider" ]
-        ]
-
-
-scoreLine : String -> Int -> String -> Html Msg
-scoreLine matchId which v =
-    div [ class "row stepper-line" ]
-        [ button [ class "step-btn", onClick (IncScore matchId which -1) ] [ text "−" ]
-        , input [ class "score", type_ "number", placeholder "0", value v, onInput (SetScore matchId which) ] []
-        , button [ class "step-btn", onClick (IncScore matchId which 1) ] [ text "+" ]
+    div [ class "row" ]
+        [ input [ class "score", type_ "number", placeholder "0", value a, onInput (SetScore matchId 0) ] []
+        , text "-"
+        , input [ class "score", type_ "number", placeholder "0", value b, onInput (SetScore matchId 1) ] []
+        , button [ class "secondary", onClick (SubmitScore matchId) ] [ text "OK" ]
         ]
 
 

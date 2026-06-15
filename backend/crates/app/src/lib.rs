@@ -360,6 +360,42 @@ impl App {
         Ok(out)
     }
 
+    /// Hard-delete a tournament: removes its event streams (Tournament +
+    /// Bracket, both keyed by the tournament id) and all its matches' streams.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a database failure.
+    pub async fn delete_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
+        let tid = tournament_id.to_string();
+        // Match aggregate ids belonging to this tournament (via the Scheduled payload).
+        let match_subquery = "SELECT aggregate_id FROM events \
+             WHERE aggregate_type = 'Match' AND event_type = 'MatchScheduled' \
+             AND payload->'Scheduled'->>'tournament_id' = $1";
+        // Snapshots first (their selection depends on the events still existing).
+        sqlx::query(&format!(
+            "DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
+        ))
+        .bind(&tid)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(&format!(
+            "DELETE FROM events WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
+        ))
+        .bind(&tid)
+        .execute(&self.pool)
+        .await?;
+        // Tournament + Bracket aggregates share the tournament id.
+        sqlx::query("DELETE FROM events WHERE aggregate_id = $1")
+            .bind(&tid)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM snapshots WHERE aggregate_id = $1")
+            .bind(&tid)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Fold a tournament's event stream into a [`TournamentView`].
     /// Returns `None` if the tournament does not exist.
     ///
