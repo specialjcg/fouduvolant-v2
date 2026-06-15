@@ -46,6 +46,10 @@ pub struct TeamView {
     pub id: TeamId,
     /// Team display name.
     pub name: String,
+    /// First player.
+    pub player1: String,
+    /// Second player.
+    pub player2: String,
 }
 
 /// A pool pinned to a court (manual scheduling).
@@ -393,8 +397,18 @@ impl App {
                     view.pool_format = pool_format;
                     view.bracket_format = bracket_format;
                 }
-                TournamentEvent::TeamRegistered { team_id, name } => {
-                    view.teams.push(TeamView { id: team_id, name });
+                TournamentEvent::TeamRegistered {
+                    team_id,
+                    name,
+                    player1,
+                    player2,
+                } => {
+                    view.teams.push(TeamView {
+                        id: team_id,
+                        name,
+                        player1,
+                        player2,
+                    });
                 }
                 TournamentEvent::TeamRemoved { team_id } => {
                     view.teams.retain(|t| t.id != team_id);

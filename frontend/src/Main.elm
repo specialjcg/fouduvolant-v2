@@ -43,6 +43,7 @@ type alias Sel =
     { id : String
     , view : TView
     , board : Board
+    , newTeamName : String
     , newTeam : String
     , newTeam2 : String
     , courts : String
@@ -88,7 +89,7 @@ type alias Summary =
 
 
 type alias Team =
-    { id : String, name : String }
+    { id : String, name : String, player1 : String, player2 : String }
 
 
 type alias TView =
@@ -169,6 +170,7 @@ type Msg
     | SetPerPool String
     | GenBracket
     | AdvanceBracket
+    | SetNewTeamName String
     | SetNewTeam String
     | SetNewTeam2 String
     | AddTeam
@@ -268,6 +270,9 @@ update msg model =
         SetNewTeam s ->
             ( mapSel (\s_ -> { s_ | newTeam = s }) model, Cmd.none )
 
+        SetNewTeamName v ->
+            ( mapSel (\s -> { s | newTeamName = v }) model, Cmd.none )
+
         SetNewTeam2 v ->
             ( mapSel (\s -> { s | newTeam2 = v }) model, Cmd.none )
 
@@ -275,25 +280,15 @@ update msg model =
             withSel model
                 (\s ->
                     let
-                        p1 =
-                            String.trim s.newTeam
-
-                        p2 =
-                            String.trim s.newTeam2
-
                         name =
-                            if p2 == "" then
-                                p1
-
-                            else
-                                p1 ++ " / " ++ p2
+                            String.trim s.newTeamName
                     in
-                    if p1 == "" then
+                    if name == "" then
                         ( model, Cmd.none )
 
                     else
-                        ( mapSel (\x -> { x | newTeam = "", newTeam2 = "" }) model
-                        , addTeam model.api s.id name
+                        ( mapSel (\x -> { x | newTeamName = "", newTeam = "", newTeam2 = "" }) model
+                        , addTeam model.api s.id name (String.trim s.newTeam) (String.trim s.newTeam2)
                         )
                 )
 
@@ -470,6 +465,7 @@ mergeView prev v =
             { id = v.id
             , view = v
             , board = { courts = [], matches = [] }
+            , newTeamName = ""
             , newTeam = ""
             , newTeam2 = ""
             , courts = String.fromInt (List.length v.courts)
@@ -571,9 +567,16 @@ createTournament api name =
         }
 
 
-addTeam : String -> String -> String -> Cmd Msg
-addTeam api tid name =
-    postEmpty api ("/tournaments/" ++ tid ++ "/teams") (E.object [ ( "name", E.string name ) ])
+addTeam : String -> String -> String -> String -> String -> Cmd Msg
+addTeam api tid name player1 player2 =
+    postEmpty api
+        ("/tournaments/" ++ tid ++ "/teams")
+        (E.object
+            [ ( "name", E.string name )
+            , ( "player1", E.string player1 )
+            , ( "player2", E.string player2 )
+            ]
+        )
 
 
 importTeams : String -> String -> List String -> Cmd Msg
@@ -726,7 +729,11 @@ summaryDec =
 
 teamDec : D.Decoder Team
 teamDec =
-    D.map2 Team (D.field "id" D.string) (D.field "name" D.string)
+    D.map4 Team
+        (D.field "id" D.string)
+        (D.field "name" D.string)
+        (D.field "player1" D.string)
+        (D.field "player2" D.string)
 
 
 tviewDec : D.Decoder TView
@@ -940,9 +947,10 @@ viewTeams s =
     div [ class "panel" ]
         [ h2 [] [ text "Équipes" ]
         , div [ class "row" ]
-            [ input [ placeholder "Participant 1", value s.newTeam, onInput SetNewTeam ] []
+            [ input [ placeholder "Nom d'équipe", value s.newTeamName, onInput SetNewTeamName ] []
+            , input [ placeholder "Participant 1", value s.newTeam, onInput SetNewTeam ] []
             , input [ placeholder "Participant 2", value s.newTeam2, onInput SetNewTeam2 ] []
-            , button [ onClick AddTeam, disabled (String.trim s.newTeam == "") ] [ text "+ Équipe" ]
+            , button [ onClick AddTeam, disabled (String.trim s.newTeamName == "") ] [ text "+ Équipe" ]
             ]
         , div [ class "row" ]
             [ button [ class "secondary", onClick PickFile ] [ text "📄 Importer un fichier" ]
@@ -963,8 +971,19 @@ viewTeams s =
 
 teamRow : Team -> Html Msg
 teamRow t =
+    let
+        players =
+            [ t.player1, t.player2 ] |> List.filter (\p -> p /= "") |> String.join " / "
+    in
     div [ class "match row", Html.Attributes.style "justify-content" "space-between" ]
-        [ span [] [ text t.name ]
+        [ div []
+            [ div [ Html.Attributes.style "font-weight" "600" ] [ text t.name ]
+            , if players == "" then
+                text ""
+
+              else
+                div [ class "muted", Html.Attributes.style "font-size" ".82rem" ] [ text players ]
+            ]
         , button [ class "secondary", onClick (DeleteTeam t.id) ] [ text "✕" ]
         ]
 

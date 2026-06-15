@@ -46,6 +46,8 @@ async fn full_tournament_and_match_flow_persists() {
             TournamentCommand::RegisterTeam {
                 team_id: id,
                 name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
             },
         )
         .await

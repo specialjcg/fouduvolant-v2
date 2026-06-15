@@ -98,8 +98,12 @@ struct CreateTournament {
 }
 
 #[derive(Deserialize)]
-struct NameBody {
+struct TeamBody {
     name: String,
+    #[serde(default)]
+    player1: String,
+    #[serde(default)]
+    player2: String,
 }
 
 #[derive(Deserialize)]
@@ -214,7 +218,7 @@ async fn get_tournament(
 async fn register_team(
     State(app): State<Arc<App>>,
     Path(id): Path<Uuid>,
-    Json(body): Json<NameBody>,
+    Json(body): Json<TeamBody>,
 ) -> Result<Response, ApiError> {
     let team_id = TeamId::new();
     app.tournament(
@@ -222,6 +226,8 @@ async fn register_team(
         TournamentCommand::RegisterTeam {
             team_id,
             name: body.name,
+            player1: body.player1,
+            player2: body.player2,
         },
     )
     .await?;
@@ -244,6 +250,8 @@ async fn import_teams(
             TournamentCommand::RegisterTeam {
                 team_id: TeamId::new(),
                 name: name.to_string(),
+                player1: String::new(),
+                player2: String::new(),
             },
         )
         .await?;

@@ -73,6 +73,10 @@ pub enum TournamentCommand {
         team_id: TeamId,
         /// Team display name.
         name: String,
+        /// First player.
+        player1: String,
+        /// Second player.
+        player2: String,
     },
     /// Remove a previously registered team during draft.
     RemoveTeam {
@@ -122,6 +126,10 @@ pub enum TournamentEvent {
         team_id: TeamId,
         /// Team display name.
         name: String,
+        /// First player.
+        player1: String,
+        /// Second player.
+        player2: String,
     },
     /// A team was removed.
     TeamRemoved {
@@ -241,13 +249,26 @@ impl Aggregate for Tournament {
                 .await;
             }
 
-            C::RegisterTeam { team_id, name } => {
+            C::RegisterTeam {
+                team_id,
+                name,
+                player1,
+                player2,
+            } => {
                 self.require_draft()?;
                 if self.teams.contains(&team_id) {
                     return Err(E::DuplicateTeam);
                 }
-                sink.write(TournamentEvent::TeamRegistered { team_id, name }, self)
-                    .await;
+                sink.write(
+                    TournamentEvent::TeamRegistered {
+                        team_id,
+                        name,
+                        player1,
+                        player2,
+                    },
+                    self,
+                )
+                .await;
             }
 
             C::RemoveTeam { team_id } => {
@@ -441,6 +462,8 @@ mod tests {
             TournamentCommand::RegisterTeam {
                 team_id: id,
                 name: "A".into(),
+                player1: "A1".into(),
+                player2: "A2".into(),
             },
         )
         .await
@@ -450,6 +473,8 @@ mod tests {
             TournamentCommand::RegisterTeam {
                 team_id: id,
                 name: "A".into(),
+                player1: "A1".into(),
+                player2: "A2".into(),
             },
         )
         .await
@@ -494,6 +519,8 @@ mod tests {
                 TournamentCommand::RegisterTeam {
                     team_id: id,
                     name: name.into(),
+                    player1: String::new(),
+                    player2: String::new(),
                 },
             )
             .await
