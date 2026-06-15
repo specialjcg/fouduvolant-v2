@@ -104,7 +104,13 @@ type alias Sugg =
 
 
 type alias MatchV =
-    { id : String, teamA : String, teamB : String, status : String, court : Maybe String }
+    { id : String
+    , teamA : String
+    , teamB : String
+    , status : String
+    , court : Maybe String
+    , doneOrder : Maybe Int
+    }
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -641,12 +647,13 @@ rowDec =
 
 matchVDec : D.Decoder MatchV
 matchVDec =
-    D.map5 MatchV
+    D.map6 MatchV
         (D.field "id" D.string)
         (D.field "team_a" D.string)
         (D.field "team_b" D.string)
         (D.field "status" D.string)
         (D.field "court" (D.nullable D.string))
+        (D.field "done_order" (D.nullable D.int))
 
 
 
@@ -899,55 +906,115 @@ viewBoard s names =
             p [ class "muted" ] [ text "Aucun terrain configuré." ]
 
           else
-            div [ class "courts" ] (List.indexedMap (viewCourt s names) s.board.courts)
+            div [ class "lanes" ] (List.indexedMap (viewLane s names) s.board.courts)
         , viewPending s names
         ]
 
 
-viewCourt : Sel -> Dict String String -> Int -> CourtPlan -> Html Msg
-viewCourt s names idx cp =
+{-| One court as a horizontal timeline: completed (left) → current → next →
+previews (right). -}
+viewLane : Sel -> Dict String String -> Int -> CourtPlan -> Html Msg
+viewLane s names idx cp =
     let
-        label m =
-            matchLabel names m
+        completed =
+            s.board.matches
+                |> List.filter (\m -> m.status == "Done" && m.court == Just cp.court)
+                |> List.sortBy (\m -> Maybe.withDefault 0 m.doneOrder)
+
+        currentNode =
+            cp.current
+                |> Maybe.andThen (findMatch s.board.matches)
+                |> Maybe.map (liveNode s names)
+                |> maybeList
+
+        nextNode =
+            cp.next
+                |> Maybe.andThen (\sg -> Maybe.map (\m -> ( m, sg )) (findMatch s.board.matches sg.matchId))
+                |> Maybe.map (\( m, sg ) -> suggestNode names cp.court m sg)
+                |> maybeList
+
+        previewNodes =
+            List.filterMap
+                (\sg -> Maybe.map (previewNode names) (findMatch s.board.matches sg.matchId))
+                cp.previews
+
+        ( badgeClass, badgeText ) =
+            if cp.current /= Nothing then
+                ( "badge live", "En cours" )
+
+            else if cp.next /= Nothing then
+                ( "badge free", "Libre" )
+
+            else
+                ( "badge idle", "Inactif" )
+
+        nodes =
+            List.map (doneNode names) completed ++ currentNode ++ nextNode ++ previewNodes
     in
-    div [ class "court" ]
-        [ h3 [] [ text ("Terrain " ++ String.fromInt (idx + 1)) ]
-        , case cp.current |> Maybe.andThen (findMatch s.board.matches) of
-            Just m ->
-                div [ class "match current" ]
-                    [ div [] [ text ("▶ " ++ label m) ]
-                    , scoreEntry s m.id
-                    ]
+    div [ class "lane" ]
+        [ div [ class "lane-head" ]
+            [ span [ class "lane-name" ] [ text ("Terrain " ++ String.fromInt (idx + 1)) ]
+            , span [ class badgeClass ] [ text badgeText ]
+            ]
+        , div [ class "track" ]
+            (if List.isEmpty nodes then
+                [ p [ class "muted" ] [ text "Aucun match" ] ]
 
-            Nothing ->
-                case cp.next of
-                    Just sg ->
-                        case findMatch s.board.matches sg.matchId of
-                            Just m ->
-                                div [ class "match next" ]
-                                    [ span [] [ text ("Suivant : " ++ label m) ]
-                                    , if sg.needsRest then
-                                        span [ class "rest" ] [ text " (repos)" ]
-
-                                      else
-                                        text ""
-                                    , div []
-                                        [ button [ onClick (StartMatch m.id cp.court) ] [ text "▶ Démarrer" ] ]
-                                    ]
-
-                            Nothing ->
-                                p [ class "muted" ] [ text "—" ]
-
-                    Nothing ->
-                        p [ class "muted" ] [ text "Libre" ]
-        , div [] (List.filterMap (previewRow s names) cp.previews)
+             else
+                nodes
+            )
         ]
 
 
-previewRow : Sel -> Dict String String -> Sugg -> Maybe (Html Msg)
-previewRow s names sg =
-    findMatch s.board.matches sg.matchId
-        |> Maybe.map (\m -> div [ class "match preview" ] [ text ("⋯ " ++ matchLabel names m) ])
+maybeList : Maybe a -> List a
+maybeList m =
+    case m of
+        Just x ->
+            [ x ]
+
+        Nothing ->
+            []
+
+
+nodeHead : String -> Html Msg
+nodeHead label =
+    div [ class "node-head" ] [ text label ]
+
+
+doneNode : Dict String String -> MatchV -> Html Msg
+doneNode names m =
+    div [ class "node done" ]
+        [ nodeHead "Terminé", div [ class "node-teams" ] [ text (matchLabel names m) ] ]
+
+
+liveNode : Sel -> Dict String String -> MatchV -> Html Msg
+liveNode s names m =
+    div [ class "node live" ]
+        [ nodeHead "● En cours"
+        , div [ class "node-teams" ] [ text (matchLabel names m) ]
+        , scoreEntry s m.id
+        ]
+
+
+suggestNode : Dict String String -> String -> MatchV -> Sugg -> Html Msg
+suggestNode names court m sg =
+    div [ class "node suggest" ]
+        [ nodeHead
+            (if sg.needsRest then
+                "Suivant · repos"
+
+             else
+                "Suivant"
+            )
+        , div [ class "node-teams" ] [ text (matchLabel names m) ]
+        , button [ onClick (StartMatch m.id court) ] [ text "▶ Démarrer" ]
+        ]
+
+
+previewNode : Dict String String -> MatchV -> Html Msg
+previewNode names m =
+    div [ class "node preview" ]
+        [ nodeHead "À venir", div [ class "node-teams" ] [ text (matchLabel names m) ] ]
 
 
 scoreEntry : Sel -> String -> Html Msg
