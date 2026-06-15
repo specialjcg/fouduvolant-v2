@@ -9,12 +9,15 @@ every mutation, so it reflects the event-sourced backend.
 
 import Browser
 import Dict exposing (Dict)
+import File exposing (File)
+import File.Select
 import Html exposing (..)
 import Html.Attributes exposing (class, disabled, placeholder, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as D
 import Json.Encode as E
+import Task
 import Time
 
 
@@ -41,6 +44,7 @@ type alias Sel =
     , view : TView
     , board : Board
     , newTeam : String
+    , newTeam2 : String
     , courts : String
     , teamA : String
     , teamB : String
@@ -166,7 +170,11 @@ type Msg
     | GenBracket
     | AdvanceBracket
     | SetNewTeam String
+    | SetNewTeam2 String
     | AddTeam
+    | PickFile
+    | GotFile File
+    | GotImport String
     | DeleteTeam String
     | GoStep Step
     | SetNumPools String
@@ -260,17 +268,43 @@ update msg model =
         SetNewTeam s ->
             ( mapSel (\s_ -> { s_ | newTeam = s }) model, Cmd.none )
 
+        SetNewTeam2 v ->
+            ( mapSel (\s -> { s | newTeam2 = v }) model, Cmd.none )
+
         AddTeam ->
             withSel model
                 (\s ->
-                    if String.trim s.newTeam == "" then
+                    let
+                        p1 =
+                            String.trim s.newTeam
+
+                        p2 =
+                            String.trim s.newTeam2
+
+                        name =
+                            if p2 == "" then
+                                p1
+
+                            else
+                                p1 ++ " / " ++ p2
+                    in
+                    if p1 == "" then
                         ( model, Cmd.none )
 
                     else
-                        ( mapSel (\x -> { x | newTeam = "" }) model
-                        , addTeam model.api s.id s.newTeam
+                        ( mapSel (\x -> { x | newTeam = "", newTeam2 = "" }) model
+                        , addTeam model.api s.id name
                         )
                 )
+
+        PickFile ->
+            ( model, File.Select.file [ "text/plain", "text/csv", ".txt", ".csv" ] GotFile )
+
+        GotFile f ->
+            ( model, Task.perform GotImport (File.toString f) )
+
+        GotImport content ->
+            withSel model (\s -> ( model, importTeams model.api s.id (String.lines content) ))
 
         SetCourts s ->
             ( mapSel (\s_ -> { s_ | courts = s }) model, Cmd.none )
@@ -437,6 +471,7 @@ mergeView prev v =
             , view = v
             , board = { courts = [], matches = [] }
             , newTeam = ""
+            , newTeam2 = ""
             , courts = String.fromInt (List.length v.courts)
             , teamA = ""
             , teamB = ""
@@ -539,6 +574,13 @@ createTournament api name =
 addTeam : String -> String -> String -> Cmd Msg
 addTeam api tid name =
     postEmpty api ("/tournaments/" ++ tid ++ "/teams") (E.object [ ( "name", E.string name ) ])
+
+
+importTeams : String -> String -> List String -> Cmd Msg
+importTeams api tid names =
+    postEmpty api
+        ("/tournaments/" ++ tid ++ "/teams/import")
+        (E.object [ ( "names", E.list E.string names ) ])
 
 
 configureCourts : String -> String -> Int -> Cmd Msg
@@ -898,8 +940,14 @@ viewTeams s =
     div [ class "panel" ]
         [ h2 [] [ text "Équipes" ]
         , div [ class "row" ]
-            [ input [ placeholder "Nom d'équipe", value s.newTeam, onInput SetNewTeam ] []
-            , button [ onClick AddTeam ] [ text "+ Équipe" ]
+            [ input [ placeholder "Participant 1", value s.newTeam, onInput SetNewTeam ] []
+            , input [ placeholder "Participant 2", value s.newTeam2, onInput SetNewTeam2 ] []
+            , button [ onClick AddTeam, disabled (String.trim s.newTeam == "") ] [ text "+ Équipe" ]
+            ]
+        , div [ class "row" ]
+            [ button [ class "secondary", onClick PickFile ] [ text "📄 Importer un fichier" ]
+            , span [ class "muted", Html.Attributes.style "font-size" ".82rem" ]
+                [ text "une équipe par ligne (ex. « Alice / Bob »)" ]
             ]
         , if List.isEmpty s.view.teams then
             p [ class "muted" ] [ text "Aucune équipe." ]

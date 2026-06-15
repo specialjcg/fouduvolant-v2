@@ -60,6 +60,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments", get(list_tournaments).post(create_tournament))
         .route("/tournaments/{id}", get(get_tournament))
         .route("/tournaments/{id}/teams", post(register_team))
+        .route("/tournaments/{id}/teams/import", post(import_teams))
         .route("/tournaments/{id}/teams/{team_id}", axum::routing::delete(remove_team))
         .route("/tournaments/{id}/pools", post(generate_pools))
         .route("/tournaments/{id}/pools/{pool_id}/matches", post(generate_pool_matches))
@@ -99,6 +100,16 @@ struct CreateTournament {
 #[derive(Deserialize)]
 struct NameBody {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct ImportTeams {
+    names: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ImportResult {
+    created: usize,
 }
 
 #[derive(Deserialize)]
@@ -215,6 +226,30 @@ async fn register_team(
     )
     .await?;
     Ok((StatusCode::CREATED, Json(IdResponse { id: team_id.0 })).into_response())
+}
+
+async fn import_teams(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ImportTeams>,
+) -> Result<Response, ApiError> {
+    let mut created = 0;
+    for raw in body.names {
+        let name = raw.trim();
+        if name.is_empty() {
+            continue;
+        }
+        app.tournament(
+            TournamentId(id),
+            TournamentCommand::RegisterTeam {
+                team_id: TeamId::new(),
+                name: name.to_string(),
+            },
+        )
+        .await?;
+        created += 1;
+    }
+    Ok((StatusCode::CREATED, Json(ImportResult { created })).into_response())
 }
 
 async fn remove_team(
