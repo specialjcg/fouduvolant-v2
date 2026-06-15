@@ -9,15 +9,12 @@ every mutation, so it reflects the event-sourced backend.
 
 import Browser
 import Dict exposing (Dict)
-import File exposing (File)
-import File.Select
 import Html exposing (..)
 import Html.Attributes exposing (class, disabled, placeholder, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as D
 import Json.Encode as E
-import Task
 import Time
 
 
@@ -46,6 +43,7 @@ type alias Sel =
     , newTeamName : String
     , newTeam : String
     , newTeam2 : String
+    , importText : String
     , courts : String
     , teamA : String
     , teamB : String
@@ -174,9 +172,8 @@ type Msg
     | SetNewTeam String
     | SetNewTeam2 String
     | AddTeam
-    | PickFile
-    | GotFile File
-    | GotImport String
+    | SetImportText String
+    | ImportList
     | DeleteTeam String
     | GoStep Step
     | SetNumPools String
@@ -292,14 +289,20 @@ update msg model =
                         )
                 )
 
-        PickFile ->
-            ( model, File.Select.file [ "text/plain", "text/csv", ".txt", ".csv" ] GotFile )
+        SetImportText v ->
+            ( mapSel (\s -> { s | importText = v }) model, Cmd.none )
 
-        GotFile f ->
-            ( model, Task.perform GotImport (File.toString f) )
+        ImportList ->
+            withSel model
+                (\s ->
+                    if String.trim s.importText == "" then
+                        ( model, Cmd.none )
 
-        GotImport content ->
-            withSel model (\s -> ( model, importTeams model.api s.id (String.lines content) ))
+                    else
+                        ( mapSel (\x -> { x | importText = "" }) model
+                        , importTeams model.api s.id (String.lines s.importText)
+                        )
+                )
 
         SetCourts s ->
             ( mapSel (\s_ -> { s_ | courts = s }) model, Cmd.none )
@@ -468,6 +471,7 @@ mergeView prev v =
             , newTeamName = ""
             , newTeam = ""
             , newTeam2 = ""
+            , importText = ""
             , courts = String.fromInt (List.length v.courts)
             , teamA = ""
             , teamB = ""
@@ -952,10 +956,22 @@ viewTeams s =
             , input [ placeholder "Participant 2", value s.newTeam2, onInput SetNewTeam2 ] []
             , button [ onClick AddTeam, disabled (String.trim s.newTeamName == "") ] [ text "+ Équipe" ]
             ]
-        , div [ class "row" ]
-            [ button [ class "secondary", onClick PickFile ] [ text "📄 Importer un fichier" ]
-            , span [ class "muted", Html.Attributes.style "font-size" ".82rem" ]
-                [ text "une équipe par ligne (ex. « Alice / Bob »)" ]
+        , div [ Html.Attributes.style "margin-top" ".5rem" ]
+            [ Html.textarea
+                [ placeholder "Coller une liste — une équipe par ligne (ex. « Les Aigles »)"
+                , value s.importText
+                , onInput SetImportText
+                , Html.Attributes.rows 4
+                , Html.Attributes.style "width" "100%"
+                ]
+                []
+            , div [ class "row" ]
+                [ button
+                    [ class "secondary", onClick ImportList, disabled (String.trim s.importText == "") ]
+                    [ text "Importer la liste" ]
+                , span [ class "muted", Html.Attributes.style "font-size" ".82rem" ]
+                    [ text "une équipe par ligne" ]
+                ]
             ]
         , if List.isEmpty s.view.teams then
             p [ class "muted" ] [ text "Aucune équipe." ]
