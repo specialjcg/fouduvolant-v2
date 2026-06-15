@@ -156,8 +156,13 @@ une fois). Tout l'arbre (main + consolante, tous les tours, byes, avancement) es
 d'équipes non ordonnée. Pas de tree stocké → évite les pitfalls (id schemes,
 seeding paths) de l'original.
 
-- `next_pow2` : taille = puissance de 2 ≥ nb (byes pour combler — choix « simplifié »
-  vs barrages/pré-tours de l'original, différés).
+- `bracket_size` : taille = puissance de 2 **≤ nb** (floor, `compute_final_bracket_size`
+  de l'original). L'excès joue un **tour préliminaire** (round 0 = barrages
+  principal / pré-tours consolante).
+- **Play-in** : `extra = n − S`, `direct = S − extra` ; les `2*extra` plus faibles
+  s'affrontent best-vs-worst (`seeds[direct+i]` vs `seeds[n-1-i]`), gagnants → slots
+  restants. Pas de byes (slots toujours pleins) → un slot inconnu = gagnant
+  préliminaire en attente, n'auto-avance pas.
 - `seed_slots` : seeding standard, **identique** au `standard_seeding_order` de
   l'original (ex. taille 8 → [1,8,4,5,2,7,3,6]). Têtes de série séparées.
 - **Consolante = équipes NON qualifiées** (bracket indépendant), pas les perdants
@@ -170,7 +175,7 @@ seeding paths) de l'original.
 - `bracket_view(tid)` : arbre + noms. Endpoints : `POST …/bracket {per_pool}`,
   `POST …/bracket/advance`, `GET …/bracket`. Front : tirage + avancer + affichage
   principal/consolante.
-- Différé : barrages/pré-tours (play-in), 3e place (si taille ≥ 8).
+- Play-in (barrages/pré-tours) : ✅ implémenté (round 0). Différé : 3e place (si taille ≥ 8).
 
 ## Scheduling (planner pur — `backend/crates/domain/src/scheduling.rs`)
 

@@ -52,14 +52,17 @@ impl BracketNode {
     }
 }
 
-/// Smallest power of two `>= n`, with a floor of 2 (a bracket needs ≥2 slots).
+/// Main-draw size for `n` entrants — the largest power of two `<= n` (floor),
+/// with a floor of 2. Non-powers play a preliminary round (barrages /
+/// pré-tours) down into this size. Faithful to the original's
+/// `compute_final_bracket_size`.
 #[must_use]
-pub fn next_pow2(n: usize) -> usize {
-    let mut s = 2;
-    while s < n {
-        s *= 2;
+pub fn bracket_size(n: usize) -> usize {
+    if n.is_power_of_two() {
+        n
+    } else {
+        (n.next_power_of_two() / 2).max(2)
     }
-    s
 }
 
 /// Standard single-elimination seed-to-slot order for a `size`-slot bracket
@@ -98,6 +101,9 @@ fn winners_lookup(results: &[Result3]) -> HashMap<(TeamId, TeamId), TeamId> {
         .collect()
 }
 
+/// Decide a node's winner from the results. A side that is `None` is a
+/// not-yet-known entrant (a pending preliminary-round winner), so the node stays
+/// undecided — there are no byes in the floor-sized + play-in model.
 fn decide(
     a: Option<TeamId>,
     b: Option<TeamId>,
@@ -105,9 +111,7 @@ fn decide(
 ) -> Option<TeamId> {
     match (a, b) {
         (Some(x), Some(y)) => lk.get(&pair_key(x, y)).copied(),
-        (Some(x), None) => Some(x), // bye
-        (None, Some(y)) => Some(y), // bye
-        (None, None) => None,
+        _ => None,
     }
 }
 
@@ -142,21 +146,50 @@ fn build_rounds(
     nodes
 }
 
-/// Build one bracket's whole tree from its seeded entrants (best first).
+/// Build one bracket from its seeded entrants (best first): a preliminary round
+/// (round 0) when the field exceeds the bracket size, then the main rounds.
+///
+/// Floor-sized bracket `S`; `extra = n - S` preliminary matches pair the weakest
+/// `2*extra` seeds best-vs-worst (`seeds[direct+i]` vs `seeds[n-1-i]`); their
+/// winners take the remaining seed slots. The top `direct = S - extra` seeds go
+/// straight in. Faithful to the original's barrage / pré-tour scheme.
 fn build_tree(
     kind: BracketKind,
     seeds: &[TeamId],
     lk: &HashMap<(TeamId, TeamId), TeamId>,
 ) -> Vec<BracketNode> {
-    if seeds.len() < 2 {
+    let n = seeds.len();
+    if n < 2 {
         return Vec::new();
     }
-    let size = next_pow2(seeds.len());
+    let size = bracket_size(n);
+    let extra = n - size;
+    let direct = size - extra;
+
+    let mut nodes = Vec::new();
+    // Direct entrants keep their seed order; preliminary winners fill the rest.
+    let mut effective: Vec<Option<TeamId>> = seeds[..direct].iter().copied().map(Some).collect();
+    for i in 0..extra {
+        let a = seeds[direct + i];
+        let b = seeds[n - 1 - i];
+        let winner = lk.get(&pair_key(a, b)).copied();
+        nodes.push(BracketNode {
+            kind,
+            round: 0,
+            index: i as u16,
+            team_a: Some(a),
+            team_b: Some(b),
+            winner,
+        });
+        effective.push(winner);
+    }
+
     let slot_teams: Vec<Option<TeamId>> = seed_slots(size)
         .iter()
-        .map(|&s| seeds.get(s - 1).copied())
+        .map(|&s| effective[s - 1])
         .collect();
-    build_rounds(kind, slot_teams, lk)
+    nodes.extend(build_rounds(kind, slot_teams, lk));
+    nodes
 }
 
 /// Reconstruct the full draw — main bracket (qualified teams) plus the
@@ -295,12 +328,15 @@ mod tests {
     }
 
     #[test]
-    fn pow2_thresholds() {
-        assert_eq!(next_pow2(2), 2);
-        assert_eq!(next_pow2(3), 4);
-        assert_eq!(next_pow2(5), 8);
-        assert_eq!(next_pow2(8), 8);
-        assert_eq!(next_pow2(9), 16);
+    fn bracket_size_floors_to_power_of_two() {
+        assert_eq!(bracket_size(2), 2);
+        assert_eq!(bracket_size(3), 2);
+        assert_eq!(bracket_size(4), 4);
+        assert_eq!(bracket_size(5), 4);
+        assert_eq!(bracket_size(8), 8);
+        assert_eq!(bracket_size(9), 8);
+        assert_eq!(bracket_size(12), 8);
+        assert_eq!(bracket_size(16), 16);
     }
 
     #[test]
@@ -325,20 +361,52 @@ mod tests {
     }
 
     #[test]
-    fn bye_auto_advances() {
-        // 3 seeds in a 4-slot bracket: seed 1 gets a bye (paired with slot for
-        // seed 4, which is empty) and auto-advances.
+    fn three_seeds_use_a_preliminary_round() {
+        // 3 seeds → floor size 2, extra 1, direct 1. Seeds 2 and 3 play a
+        // preliminary; its winner meets seed 1 in the final. No byes.
         let t: Vec<TeamId> = (1..=3).map(team).collect();
         let nodes = build_bracket(&t, &[], &[]);
-        let r1: Vec<&BracketNode> = nodes
+        let prelim: Vec<&BracketNode> = nodes
+            .iter()
+            .filter(|n| n.kind == BracketKind::Main && n.round == 0)
+            .collect();
+        assert_eq!(prelim.len(), 1);
+        assert_eq!((prelim[0].team_a, prelim[0].team_b), (Some(t[1]), Some(t[2])));
+
+        // Final exists but its play-in side is unknown (not a bye → undecided).
+        let final_node = nodes
+            .iter()
+            .find(|n| n.kind == BracketKind::Main && n.round == 1)
+            .unwrap();
+        assert!(final_node.team_a == Some(t[0]) || final_node.team_b == Some(t[0]));
+        assert_eq!(final_node.winner, None);
+
+        // Play the preliminary: seed 2 wins → it fills the final slot.
+        let nodes2 = build_bracket(&t, &[], &[(t[1], t[2], t[1])]);
+        let final2 = nodes2
+            .iter()
+            .find(|n| n.kind == BracketKind::Main && n.round == 1)
+            .unwrap();
+        let teams = [final2.team_a, final2.team_b];
+        assert!(teams.contains(&Some(t[0])) && teams.contains(&Some(t[1])));
+    }
+
+    #[test]
+    fn five_seeds_one_barrage() {
+        // 5 → size 4, extra 1, direct 3. Seeds 4 and 5 play the barrage.
+        let t: Vec<TeamId> = (1..=5).map(team).collect();
+        let nodes = build_bracket(&t, &[], &[]);
+        let prelim: Vec<&BracketNode> = nodes
+            .iter()
+            .filter(|n| n.kind == BracketKind::Main && n.round == 0)
+            .collect();
+        assert_eq!(prelim.len(), 1);
+        assert_eq!((prelim[0].team_a, prelim[0].team_b), (Some(t[3]), Some(t[4])));
+        let r1 = nodes
             .iter()
             .filter(|n| n.kind == BracketKind::Main && n.round == 1)
-            .collect();
-        // (1 vs bye) → winner seed1 auto ; (2 vs 3) → undecided
-        let bye = r1.iter().find(|n| n.team_b.is_none()).unwrap();
-        assert_eq!(bye.winner, Some(t[0]));
-        let real = r1.iter().find(|n| n.team_b.is_some()).unwrap();
-        assert_eq!(real.winner, None);
+            .count();
+        assert_eq!(r1, 2, "size-4 bracket has two first-round matches");
     }
 
     #[test]

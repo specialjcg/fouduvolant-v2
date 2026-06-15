@@ -772,8 +772,16 @@ bracketNodeRow n =
                 Nothing ->
                     ""
     in
+    let
+        label =
+            if n.round == 0 then
+                "Prélim "
+
+            else
+                "T" ++ String.fromInt n.round ++ " "
+    in
     div [ class "match" ]
-        [ span [ class "muted" ] [ text ("T" ++ String.fromInt n.round ++ " ") ]
+        [ span [ class "muted" ] [ text label ]
         , text (side n.teamA ++ " vs " ++ side n.teamB ++ result)
         ]
 
