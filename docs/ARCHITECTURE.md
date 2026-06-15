@@ -175,7 +175,9 @@ seeding paths) de l'original.
 - `bracket_view(tid)` : arbre + noms. Endpoints : `POST …/bracket {per_pool}`,
   `POST …/bracket/advance`, `GET …/bracket`. Front : tirage + avancer + affichage
   principal/consolante.
-- Play-in (barrages/pré-tours) : ✅ implémenté (round 0). Différé : 3e place (si taille ≥ 8).
+- Play-in (barrages/pré-tours) : ✅ round 0. 3e place (petite finale) : ✅ si taille
+  ≥ 8 — perdants des 2 demies, round `THIRD_PLACE_ROUND` (255, trié après la finale).
+  Différé : reseed séparation de poule (anti même-poule au 1er tour).
 
 ## Scheduling (planner pur — `backend/crates/domain/src/scheduling.rs`)
 

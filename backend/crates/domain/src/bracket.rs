@@ -189,8 +189,40 @@ fn build_tree(
         .map(|&s| effective[s - 1])
         .collect();
     nodes.extend(build_rounds(kind, slot_teams, lk));
+
+    // Third-place match (petite finale) for brackets of 8+: the two semifinal
+    // losers. Round `THIRD_PLACE_ROUND` sorts it after the final.
+    if size >= 8 {
+        let final_round = size.trailing_zeros() as u8; // log2(size)
+        let third = {
+            let mut semis: Vec<&BracketNode> = nodes
+                .iter()
+                .filter(|n| n.round == final_round - 1)
+                .collect();
+            semis.sort_by_key(|n| n.index);
+            let loser = |n: &BracketNode| match (n.team_a, n.team_b, n.winner) {
+                (Some(a), Some(b), Some(w)) => Some(if w == a { b } else { a }),
+                _ => None,
+            };
+            (semis.len() == 2).then(|| (loser(semis[0]), loser(semis[1])))
+        };
+        if let Some((la, lb)) = third {
+            nodes.push(BracketNode {
+                kind,
+                round: THIRD_PLACE_ROUND,
+                index: 0,
+                team_a: la,
+                team_b: lb,
+                winner: decide(la, lb, lk),
+            });
+        }
+    }
+
     nodes
 }
+
+/// Sentinel round number for the third-place match (sorts after the final).
+pub const THIRD_PLACE_ROUND: u8 = u8::MAX;
 
 /// Reconstruct the full draw — main bracket (qualified teams) plus the
 /// consolation bracket (non-qualified teams) — from the seeded draws and the
@@ -437,6 +469,47 @@ mod tests {
             (cons_r1[0].team_a, cons_r1[0].team_b),
             (Some(cons[0]), Some(cons[3]))
         );
+    }
+
+    #[test]
+    fn third_place_only_for_eight_plus() {
+        let four: Vec<TeamId> = (1..=4).map(team).collect();
+        assert_eq!(
+            build_bracket(&four, &[], &[])
+                .iter()
+                .filter(|n| n.round == THIRD_PLACE_ROUND)
+                .count(),
+            0
+        );
+        let eight: Vec<TeamId> = (1..=8).map(team).collect();
+        assert_eq!(
+            build_bracket(&eight, &[], &[])
+                .iter()
+                .filter(|n| n.round == THIRD_PLACE_ROUND)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn third_place_holds_semifinal_losers() {
+        let t: Vec<TeamId> = (1..=8).map(team).collect();
+        // Lower seed index always wins.
+        let results = vec![
+            (t[0], t[7], t[0]),
+            (t[3], t[4], t[3]),
+            (t[1], t[6], t[1]),
+            (t[2], t[5], t[2]),
+            (t[0], t[3], t[0]),
+            (t[1], t[2], t[1]),
+        ];
+        let nodes = build_bracket(&t, &[], &results);
+        let third = nodes
+            .iter()
+            .find(|n| n.round == THIRD_PLACE_ROUND)
+            .unwrap();
+        let teams = [third.team_a, third.team_b];
+        assert!(teams.contains(&Some(t[3])) && teams.contains(&Some(t[2])));
     }
 
     #[test]

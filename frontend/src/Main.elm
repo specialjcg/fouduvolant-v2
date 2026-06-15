@@ -777,6 +777,9 @@ bracketNodeRow n =
             if n.round == 0 then
                 "Prélim "
 
+            else if n.round == 255 then
+                "3e place "
+
             else
                 "T" ++ String.fromInt n.round ++ " "
     in
