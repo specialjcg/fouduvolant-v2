@@ -14,6 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
@@ -72,9 +73,16 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
         .route("/matches/{id}/start", post(start_match))
         .route("/matches/{id}/sets", post(record_set))
+        // Serve the built frontend (index.html, elm.js) for any non-API path.
+        .fallback_service(ServeDir::new(static_dir()))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(app)
+}
+
+/// Directory of static frontend assets, overridable via `STATIC_DIR`.
+fn static_dir() -> String {
+    std::env::var("STATIC_DIR").unwrap_or_else(|_| "static".to_string())
 }
 
 // ---- Requests / responses ----

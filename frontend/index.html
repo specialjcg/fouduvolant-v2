@@ -41,10 +41,11 @@
   <div id="app"></div>
   <script src="elm.js"></script>
   <script>
+    // Same-origin by default (backend serves this file). Override with ?api=...
     var apiBase = (location.search.match(/[?&]api=([^&]+)/) || [])[1];
     Elm.Main.init({
       node: document.getElementById("app"),
-      flags: { apiBase: apiBase ? decodeURIComponent(apiBase) : "http://localhost:3000" }
+      flags: { apiBase: apiBase ? decodeURIComponent(apiBase) : "" }
     });
   </script>
 </body>
