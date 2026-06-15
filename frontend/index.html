@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fou du Volant</title>
+  <style>
+    :root { --bg:#0f1419; --panel:#1b232d; --line:#2c3a47; --fg:#e6edf3; --muted:#8b99a6;
+            --accent:#3fb950; --warn:#d29922; --danger:#f85149; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+    header { padding:1rem 1.5rem; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:1rem; }
+    header h1 { font-size:1.2rem; margin:0; }
+    main { padding:1.5rem; max-width:1100px; margin:0 auto; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:1rem; margin-bottom:1rem; }
+    .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    .courts { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:1rem; }
+    .court { background:#10171f; border:1px solid var(--line); border-radius:8px; padding:.75rem; }
+    .court h3 { margin:0 0 .5rem; font-size:.95rem; color:var(--muted); }
+    .match { padding:.4rem .5rem; border-radius:6px; background:#1b232d; margin:.3rem 0; }
+    .current { border-left:3px solid var(--accent); }
+    .next { border-left:3px solid var(--warn); }
+    .preview { opacity:.65; font-size:.85rem; }
+    .rest { color:var(--warn); }
+    button { background:var(--accent); color:#06210d; border:0; border-radius:6px; padding:.4rem .7rem;
+             font-weight:600; cursor:pointer; }
+    button.secondary { background:#30404f; color:var(--fg); }
+    button:disabled { opacity:.4; cursor:not-allowed; }
+    input, select { background:#0d1117; color:var(--fg); border:1px solid var(--line);
+                    border-radius:6px; padding:.4rem .5rem; }
+    input.score { width:3.2rem; text-align:center; }
+    a { color:var(--accent); cursor:pointer; }
+    .err { color:var(--danger); }
+    .muted { color:var(--muted); }
+    .pill { font-size:.75rem; padding:.1rem .5rem; border-radius:10px; background:#30404f; }
+    table { width:100%; border-collapse:collapse; }
+    td, th { text-align:left; padding:.3rem .4rem; border-bottom:1px solid var(--line); font-size:.9rem; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="elm.js"></script>
+  <script>
+    var apiBase = (location.search.match(/[?&]api=([^&]+)/) || [])[1];
+    Elm.Main.init({
+      node: document.getElementById("app"),
+      flags: { apiBase: apiBase ? decodeURIComponent(apiBase) : "http://localhost:3000" }
+    });
+  </script>
+</body>
+</html>

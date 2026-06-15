@@ -1,0 +1,15 @@
+# Rust
+/backend/target
+**/*.rs.bk
+
+# Elm / Node
+/frontend/elm-stuff
+/frontend/node_modules
+/frontend/elm.js
+
+# Env
+.env
+
+# Editor / tooling
+/.idea
+/.claude

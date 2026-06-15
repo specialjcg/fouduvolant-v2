@@ -1,0 +1,20 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+domain = { path = "../domain" }
+cqrs-es.workspace = true
+postgres-es.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "json", "runtime-tokio-rustls"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid.workspace = true

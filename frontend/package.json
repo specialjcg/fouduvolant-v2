@@ -1,0 +1,12 @@
+{
+  "name": "fouduvolant-frontend",
+  "version": "0.1.0",
+  "description": "Fouduvolant v2 — Elm MVU frontend",
+  "scripts": {
+    "build": "elm make src/Main.elm --output=elm.js",
+    "build:optimize": "elm make src/Main.elm --optimize --output=elm.js"
+  },
+  "devDependencies": {
+    "elm": "^0.19.1-6"
+  }
+}
