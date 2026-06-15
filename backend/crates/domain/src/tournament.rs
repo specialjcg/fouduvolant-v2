@@ -48,6 +48,7 @@ pub struct Tournament {
     teams: Vec<TeamId>,
     pools: Vec<Pool>,
     courts: Vec<CourtId>,
+    pool_courts: Vec<(PoolId, CourtId)>,
     pool_format: MatchFormat,
     bracket_format: MatchFormat,
 }
@@ -87,6 +88,13 @@ pub enum TournamentCommand {
     ConfigureCourts {
         /// Court identities.
         courts: Vec<CourtId>,
+    },
+    /// Pin a pool to a specific court (manual scheduling).
+    AssignPoolCourt {
+        /// Pool to assign.
+        pool_id: PoolId,
+        /// Court it should play on.
+        court_id: CourtId,
     },
     /// Lock setup and begin the pool stage.
     StartPoolPhase,
@@ -130,6 +138,13 @@ pub enum TournamentEvent {
         /// Court identities.
         courts: Vec<CourtId>,
     },
+    /// A pool was pinned to a court.
+    PoolCourtAssigned {
+        /// Pool assigned.
+        pool_id: PoolId,
+        /// Court it plays on.
+        court_id: CourtId,
+    },
     /// The pool stage began.
     PoolPhaseStarted,
     /// The bracket stage began.
@@ -144,6 +159,7 @@ impl DomainEvent for TournamentEvent {
             TournamentEvent::TeamRemoved { .. } => "TeamRemoved",
             TournamentEvent::PoolsGenerated { .. } => "PoolsGenerated",
             TournamentEvent::CourtsConfigured { .. } => "CourtsConfigured",
+            TournamentEvent::PoolCourtAssigned { .. } => "PoolCourtAssigned",
             TournamentEvent::PoolPhaseStarted => "PoolPhaseStarted",
             TournamentEvent::BracketPhaseStarted => "BracketPhaseStarted",
         }
@@ -176,6 +192,9 @@ pub enum TournamentError {
     /// Court list is invalid.
     #[error("invalid courts: {0}")]
     InvalidCourts(&'static str),
+    /// Pool→court assignment is invalid.
+    #[error("cannot assign pool to court: {0}")]
+    CannotAssign(&'static str),
     /// Cannot start the pool phase yet.
     #[error("cannot start pool phase: {0}")]
     CannotStartPoolPhase(&'static str),
@@ -262,6 +281,23 @@ impl Aggregate for Tournament {
                     .await;
             }
 
+            C::AssignPoolCourt { pool_id, court_id } => {
+                if self.phase != Phase::Draft && self.phase != Phase::PoolPhase {
+                    return Err(E::CannotAssign("only during draft or pool phase"));
+                }
+                if !self.pools.iter().any(|p| p.id == pool_id) {
+                    return Err(E::CannotAssign("unknown pool"));
+                }
+                if !self.courts.contains(&court_id) {
+                    return Err(E::CannotAssign("unknown court"));
+                }
+                sink.write(
+                    TournamentEvent::PoolCourtAssigned { pool_id, court_id },
+                    self,
+                )
+                .await;
+            }
+
             C::StartPoolPhase => {
                 self.require_draft()?;
                 if self.pools.is_empty() {
@@ -307,6 +343,10 @@ impl Aggregate for Tournament {
             }
             TournamentEvent::CourtsConfigured { courts } => {
                 self.courts = courts;
+            }
+            TournamentEvent::PoolCourtAssigned { pool_id, court_id } => {
+                self.pool_courts.retain(|(p, _)| *p != pool_id);
+                self.pool_courts.push((pool_id, court_id));
             }
             TournamentEvent::PoolPhaseStarted => {
                 self.phase = Phase::PoolPhase;

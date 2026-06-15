@@ -94,11 +94,16 @@ type alias TView =
     , teams : List Team
     , pools : List PoolV
     , courts : List String
+    , poolCourts : List PoolCourt
     }
 
 
 type alias PoolV =
     { id : String, name : String, teams : List String }
+
+
+type alias PoolCourt =
+    { pool : String, court : String }
 
 
 type alias Board =
@@ -172,6 +177,7 @@ type Msg
     | SetCourts String
     | SaveCourts
     | GenPoolMatches String
+    | AssignPoolCourt String String
     | SetTeamA String
     | SetTeamB String
     | ScheduleMatch
@@ -282,6 +288,16 @@ update msg model =
 
         GenPoolMatches poolId ->
             withSel model (\s -> ( model, genPoolMatches model.api s.id poolId ))
+
+        AssignPoolCourt poolId courtId ->
+            withSel model
+                (\s ->
+                    if courtId == "" then
+                        ( model, Cmd.none )
+
+                    else
+                        ( model, assignPoolCourt model.api s.id poolId courtId )
+                )
 
         DeleteTeam teamId ->
             withSel model (\s -> ( model, deleteTeam model.api s.id teamId ))
@@ -613,6 +629,13 @@ genPoolMatches api tid poolId =
         }
 
 
+assignPoolCourt : String -> String -> String -> String -> Cmd Msg
+assignPoolCourt api tid poolId courtId =
+    postEmpty api
+        ("/tournaments/" ++ tid ++ "/pools/" ++ poolId ++ "/court")
+        (E.object [ ( "court_id", E.string courtId ) ])
+
+
 scheduleMatch : String -> String -> String -> String -> Cmd Msg
 scheduleMatch api tid a b =
     postEmpty api
@@ -666,13 +689,14 @@ teamDec =
 
 tviewDec : D.Decoder TView
 tviewDec =
-    D.map6 TView
+    D.map7 TView
         (D.field "id" D.string)
         (D.field "name" D.string)
         (D.field "phase" D.string)
         (D.field "teams" (D.list teamDec))
         (D.field "pools" (D.list poolDec))
         (D.field "courts" (D.list D.string))
+        (D.field "pool_courts" (D.list (D.map2 PoolCourt (D.field "pool" D.string) (D.field "court" D.string))))
 
 
 poolDec : D.Decoder PoolV
@@ -917,7 +941,18 @@ viewPools s =
             p [ class "muted" ] [ text "Aucune poule. Répartis les équipes ci-dessus." ]
 
           else
-            div [] (List.map (poolRow (teamNames s.view.teams)) s.view.pools)
+            let
+                names =
+                    teamNames s.view.teams
+
+                assignedOf pid =
+                    s.view.poolCourts
+                        |> List.filter (\pc -> pc.pool == pid)
+                        |> List.head
+                        |> Maybe.map .court
+            in
+            div []
+                (List.map (\p -> poolRow names s.view.courts (assignedOf p.id) p) s.view.pools)
         , div [ class "row", Html.Attributes.style "margin-top" "1rem" ]
             [ button
                 [ onClick StartPools
@@ -1037,16 +1072,32 @@ standingsRow r =
         ]
 
 
-poolRow : Dict String String -> PoolV -> Html Msg
-poolRow names p =
+poolRow : Dict String String -> List String -> Maybe String -> PoolV -> Html Msg
+poolRow names courts assigned p =
     div [ class "match" ]
         [ div [ class "row", Html.Attributes.style "justify-content" "space-between" ]
             [ span [ Html.Attributes.style "font-weight" "600" ] [ text p.name ]
-            , button [ onClick (GenPoolMatches p.id) ] [ text "Générer matchs" ]
+            , div [ class "row" ]
+                [ courtSelect courts assigned p.id
+                , button [ onClick (GenPoolMatches p.id) ] [ text "Générer matchs" ]
+                ]
             ]
         , div [ class "muted", Html.Attributes.style "font-size" ".85rem" ]
             [ text (String.join " · " (List.map (nameOf names) p.teams)) ]
         ]
+
+
+courtSelect : List String -> Maybe String -> String -> Html Msg
+courtSelect courts assigned poolId =
+    Html.select [ onInput (AssignPoolCourt poolId) ]
+        (option [ value "" ] [ text "— terrain —" ]
+            :: List.indexedMap
+                (\i c ->
+                    option [ value c, Html.Attributes.selected (assigned == Just c) ]
+                        [ text ("Terrain " ++ String.fromInt (i + 1)) ]
+                )
+                courts
+        )
 
 
 viewBoard : Sel -> Dict String String -> Html Msg

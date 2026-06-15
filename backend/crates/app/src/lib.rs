@@ -48,6 +48,15 @@ pub struct TeamView {
     pub name: String,
 }
 
+/// A pool pinned to a court (manual scheduling).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolCourtView {
+    /// Pool id.
+    pub pool: PoolId,
+    /// Court id.
+    pub court: CourtId,
+}
+
 /// Full read view of a tournament, folded from its event stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TournamentView {
@@ -63,6 +72,8 @@ pub struct TournamentView {
     pub pools: Vec<DomainPool>,
     /// Configured courts.
     pub courts: Vec<CourtId>,
+    /// Manual pool→court assignments.
+    pub pool_courts: Vec<PoolCourtView>,
     /// Pool match format.
     pub pool_format: MatchFormat,
     /// Bracket match format.
@@ -240,7 +251,8 @@ impl App {
             .filter(|v| v.tournament == tournament_id)
             .collect();
 
-        let plans = plan(&views, &courts, &std::collections::HashMap::new());
+        let map = self.pool_court_map(tournament_id).await?;
+        let plans = plan(&views, &courts, &map);
 
         let mut started = Vec::new();
         for cp in plans {
@@ -364,6 +376,7 @@ impl App {
             teams: Vec::new(),
             pools: Vec::new(),
             courts: Vec::new(),
+            pool_courts: Vec::new(),
             pool_format: MatchFormat::BestOf1,
             bracket_format: MatchFormat::BestOf3,
         };
@@ -388,6 +401,13 @@ impl App {
                 }
                 TournamentEvent::PoolsGenerated { pools } => view.pools = pools,
                 TournamentEvent::CourtsConfigured { courts } => view.courts = courts,
+                TournamentEvent::PoolCourtAssigned { pool_id, court_id } => {
+                    view.pool_courts.retain(|pc| pc.pool != pool_id);
+                    view.pool_courts.push(PoolCourtView {
+                        pool: pool_id,
+                        court: court_id,
+                    });
+                }
                 TournamentEvent::PoolPhaseStarted => view.phase = Phase::PoolPhase,
                 TournamentEvent::BracketPhaseStarted => view.phase = Phase::BracketPhase,
             }
@@ -408,11 +428,26 @@ impl App {
             .into_iter()
             .filter(|v| v.tournament == tournament_id)
             .collect();
-        let plans = plan(&matches, &courts, &std::collections::HashMap::new());
+        let map = self.pool_court_map(tournament_id).await?;
+        let plans = plan(&matches, &courts, &map);
         Ok(BoardView {
             courts: plans,
             matches,
         })
+    }
+
+    /// Manual pool→court assignments, folded from the tournament events.
+    async fn pool_court_map(
+        &self,
+        tournament_id: TournamentId,
+    ) -> Result<std::collections::HashMap<PoolId, CourtId>, AppError> {
+        let mut map = std::collections::HashMap::new();
+        for ev in self.tournament_events(tournament_id).await? {
+            if let TournamentEvent::PoolCourtAssigned { pool_id, court_id } = ev {
+                map.insert(pool_id, court_id);
+            }
+        }
+        Ok(map)
     }
 
     /// Compute ranked standings for every pool of a tournament.

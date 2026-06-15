@@ -223,6 +223,8 @@ commit) en `MatchView` pour le planner. Synthétise depuis l'ordre global :
 ### Process manager — `App::dispatch_courts(tournament_id)` (fait, pull)
 Rejoue le store → projection → `plan` → `Start{court}` sur chaque terrain libre.
 - `tournament_courts` : folde les events Tournament (dernier `CourtsConfigured`).
+- `pool_court_map` : folde les `PoolCourtAssigned` (assignation manuelle poule→terrain,
+  command `AssignPoolCourt`) → passé au `plan` (sinon map vide = auto greedy).
 - `match_projection` : rejoue TOUS les events Match `ORDER BY global_seq`
   (ordre global de commit), puis filtre par `tournament`.
 - N'auto-démarre PAS les suggestions `needs_rest` (btb forcé) → laissées au manuel

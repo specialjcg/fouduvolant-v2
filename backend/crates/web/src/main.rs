@@ -63,6 +63,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/teams/{team_id}", axum::routing::delete(remove_team))
         .route("/tournaments/{id}/pools", post(generate_pools))
         .route("/tournaments/{id}/pools/{pool_id}/matches", post(generate_pool_matches))
+        .route("/tournaments/{id}/pools/{pool_id}/court", post(assign_pool_court))
         .route("/tournaments/{id}/courts", post(configure_courts))
         .route("/tournaments/{id}/start-pools", post(start_pools))
         .route("/tournaments/{id}/start-bracket", post(start_bracket))
@@ -114,6 +115,11 @@ struct GeneratePools {
 #[derive(Deserialize)]
 struct ConfigureCourts {
     count: usize,
+}
+
+#[derive(Deserialize)]
+struct AssignCourt {
+    court_id: Uuid,
 }
 
 #[derive(Deserialize)]
@@ -252,6 +258,22 @@ async fn generate_pool_matches(
         .generate_pool_matches(TournamentId(id), PoolId(pool_id))
         .await?;
     Ok((StatusCode::CREATED, Json(CreatedResponse { created })).into_response())
+}
+
+async fn assign_pool_court(
+    State(app): State<Arc<App>>,
+    Path((id, pool_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<AssignCourt>,
+) -> Result<Response, ApiError> {
+    app.tournament(
+        TournamentId(id),
+        TournamentCommand::AssignPoolCourt {
+            pool_id: PoolId(pool_id),
+            court_id: CourtId(body.court_id),
+        },
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn configure_courts(
