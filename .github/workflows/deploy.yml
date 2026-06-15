@@ -1,0 +1,97 @@
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Backend release binary ---
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Build release binary
+        working-directory: backend
+        run: cargo build --release --bin fouduvolant
+
+      # --- Frontend (elm) → static/ ---
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          ./node_modules/.bin/elm make src/Main.elm --optimize --output=elm.js
+          mkdir -p ../static
+          cp index.html elm.js ../static/
+
+      # --- Deploy to VPS (replaces the original fouduvolant) ---
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+          ssh-keyscan -p 9999 VPS-779132.ssh.vps1euro.fr >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy
+        run: |
+          HOST="root@VPS-779132.ssh.vps1euro.fr"
+          OPTS="-o Port=9999 -i ~/.ssh/id_deploy -o ConnectTimeout=15 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
+
+          # Retry: the edge SSH (port 9999) drops intermittently; replay the same
+          # command (passed as an argument, not stdin) without rebuilding.
+          retry() {
+            local n=0 max=8 delay=8
+            until "$@"; do
+              n=$((n+1))
+              if [ "$n" -ge "$max" ]; then echo "::error::échec après $max essais: $*"; return 1; fi
+              echo "::warning::essai $n/$max échoué, retry dans ${delay}s..."
+              sleep "$delay"
+            done
+          }
+
+          # 1. Binary to staging (.new) — service still up, avoids "text file busy".
+          retry scp $OPTS backend/target/release/fouduvolant "$HOST:/opt/fouduvolant/fouduvolant.new"
+          # 2. Static assets (index.html + elm.js).
+          retry scp $OPTS -r static "$HOST:/opt/fouduvolant/"
+
+          # 3. Finalize in one connection. Runtime env (DATABASE_URL, PORT,
+          #    STATIC_DIR, BIND_HOST) lives in the systemd drop-in set at bootstrap.
+          REMOTE=$(cat <<'FINALIZE'
+          set -e
+          systemctl stop fouduvolant || true
+          mkdir -p /opt/fouduvolant/static
+          [ -f /opt/fouduvolant/fouduvolant ] && cp -f /opt/fouduvolant/fouduvolant /opt/fouduvolant/fouduvolant.bak || true
+          mv -f /opt/fouduvolant/fouduvolant.new /opt/fouduvolant/fouduvolant
+          id fouduvolant >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin -d /opt/fouduvolant -M fouduvolant
+          chmod 750 /opt/fouduvolant/fouduvolant
+          chown -R fouduvolant:fouduvolant /opt/fouduvolant
+          chmod 755 /opt/fouduvolant /opt/fouduvolant/static
+          find /opt/fouduvolant/static -type f -exec chmod 644 {} \;
+          systemctl daemon-reload
+          systemctl start fouduvolant
+          sleep 2
+          systemctl is-active fouduvolant
+          echo "=== SERVICE ===" && systemctl status fouduvolant --no-pager | head -6
+          FINALIZE
+          )
+          retry ssh $OPTS "$HOST" "$REMOTE"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

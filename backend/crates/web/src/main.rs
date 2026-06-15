@@ -46,7 +46,8 @@ async fn main() {
     let router = router(Arc::new(app));
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
-    let addr = format!("0.0.0.0:{port}");
+    let host = std::env::var("BIND_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("bind listener");
