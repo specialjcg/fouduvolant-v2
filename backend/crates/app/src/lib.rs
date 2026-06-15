@@ -14,7 +14,9 @@ use postgres_es::{default_postgress_pool, postgres_cqrs, PostgresCqrs};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
 
-use domain::bracket::{build_bracket, Bracket, BracketCommand, BracketError, BracketKind};
+use domain::bracket::{
+    build_bracket, reseed_pool_separation, Bracket, BracketCommand, BracketError, BracketKind,
+};
 use domain::generation::round_robin_pairs;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
 use domain::matches::{Match, MatchCommand, MatchError, MatchEvent};
@@ -497,8 +499,10 @@ impl App {
         let standings = self.standings(tournament_id).await?;
         let mut main: Vec<(u32, usize, TeamId)> = Vec::new();
         let mut cons: Vec<(u32, usize, TeamId)> = Vec::new();
+        let mut pool_of: std::collections::HashMap<TeamId, usize> = std::collections::HashMap::new();
         for (pool_idx, ps) in standings.iter().enumerate() {
             for row in &ps.rows {
+                pool_of.insert(row.team, pool_idx + 1);
                 let entry = (row.rank, pool_idx, row.team);
                 if (row.rank as usize) <= per_pool {
                     main.push(entry);
@@ -510,8 +514,11 @@ impl App {
         // Rank-major ordering keeps pools apart in the seeding.
         main.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
         cons.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        let main_seeds: Vec<TeamId> = main.into_iter().map(|(_, _, t)| t).collect();
-        let consolation_seeds: Vec<TeamId> = cons.into_iter().map(|(_, _, t)| t).collect();
+        let mut main_seeds: Vec<TeamId> = main.into_iter().map(|(_, _, t)| t).collect();
+        let mut consolation_seeds: Vec<TeamId> = cons.into_iter().map(|(_, _, t)| t).collect();
+        // Avoid first-round same-pool matchups where possible.
+        reseed_pool_separation(&mut main_seeds, &pool_of);
+        reseed_pool_separation(&mut consolation_seeds, &pool_of);
 
         if main_seeds.len() < 2 {
             return Err(AppError::Command(

@@ -83,6 +83,44 @@ pub fn seed_slots(size: usize) -> Vec<usize> {
     v
 }
 
+/// Reorder a seeded participant list to avoid first-round same-pool matchups,
+/// greedily — a best-effort port of the original's `reseed_avoid_first_round_rematch`.
+///
+/// First-round pairs follow the `(i, n-1-i)` convention (same set of pairs as
+/// [`seed_slots`]). When a pair shares a pool, the bottom-half team is swapped
+/// with another bottom-half team that resolves both pairs. Residual conflicts
+/// (unavoidable) are left as-is. `pool_of` maps a team to its pool number; 0
+/// means "no pool" and is never treated as a conflict.
+pub fn reseed_pool_separation(participants: &mut [TeamId], pool_of: &HashMap<TeamId, usize>) {
+    let n = participants.len();
+    if n < 4 {
+        return;
+    }
+    let pairs = n / 2;
+    let pool = |t: TeamId| pool_of.get(&t).copied().unwrap_or(0);
+
+    for i in 0..pairs {
+        let (a, b) = (i, n - 1 - i);
+        let pa = pool(participants[a]);
+        if pa == 0 || pool(participants[b]) != pa {
+            continue;
+        }
+        for j in 0..pairs {
+            if j == i {
+                continue;
+            }
+            let (aj, bj) = (j, n - 1 - j);
+            let new_opp_a = pool(participants[bj]);
+            let moved_b = pool(participants[b]);
+            let pool_aj = pool(participants[aj]);
+            if new_opp_a != pa && moved_b != pool_aj {
+                participants.swap(b, bj);
+                break;
+            }
+        }
+    }
+}
+
 /// A completed match outcome feeding bracket reconstruction.
 pub type Result3 = (TeamId, TeamId, TeamId);
 
@@ -517,6 +555,27 @@ mod tests {
         let main: Vec<TeamId> = (1..=4).map(team).collect();
         let nodes = build_bracket(&main, &[], &[]);
         assert!(nodes.iter().all(|n| n.kind == BracketKind::Main));
+    }
+
+    #[test]
+    fn reseed_breaks_same_pool_first_round_pairs() {
+        use std::collections::HashMap;
+        // Seeds [a,b,c,d]; (i,n-1-i) pairs (a,d) and (b,c). a&d in pool 1, b&c
+        // in pool 2 → both pairs same-pool. Reseed must separate them.
+        let (a, b, c, d) = (team(1), team(2), team(3), team(4));
+        let mut seeds = vec![a, b, c, d];
+        let pools: HashMap<TeamId, usize> =
+            [(a, 1), (d, 1), (b, 2), (c, 2)].into_iter().collect();
+        reseed_pool_separation(&mut seeds, &pools);
+        let pool = |t: TeamId| pools[&t];
+        let n = seeds.len();
+        for i in 0..n / 2 {
+            assert_ne!(
+                pool(seeds[i]),
+                pool(seeds[n - 1 - i]),
+                "pair {i} still same-pool"
+            );
+        }
     }
 
     #[tokio::test]

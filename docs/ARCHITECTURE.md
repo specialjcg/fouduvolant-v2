@@ -177,7 +177,9 @@ seeding paths) de l'original.
   principal/consolante.
 - Play-in (barrages/pré-tours) : ✅ round 0. 3e place (petite finale) : ✅ si taille
   ≥ 8 — perdants des 2 demies, round `THIRD_PLACE_ROUND` (255, trié après la finale).
-  Différé : reseed séparation de poule (anti même-poule au 1er tour).
+  Reseed séparation de poule : ✅ `reseed_pool_separation` (greedy, port de
+  l'original) appliqué aux seeds main + consolante avant le tirage — évite les
+  affrontements même-poule au 1er tour (best-effort, conflits inévitables tolérés).
 
 ## Scheduling (planner pur — `backend/crates/domain/src/scheduling.rs`)
 
