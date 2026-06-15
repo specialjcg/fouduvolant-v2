@@ -734,9 +734,9 @@ viewTournament s =
 
 viewBracket : Sel -> Html Msg
 viewBracket s =
-    div [ class "panel" ]
+    div [ class "panel finals" ]
         [ div [ class "row" ]
-            [ h2 [] [ text "Bracket" ]
+            [ h2 [] [ text "Finales" ]
             , text "Qualifiés/poule :"
             , input [ type_ "number", class "score", value s.perPool, onInput SetPerPool ] []
             , button [ onClick GenBracket ] [ text "Générer" ]
@@ -803,7 +803,7 @@ viewStandings s =
 
     else
         div [ class "panel" ]
-            (h2 [] [ text "Classements" ]
+            (h2 [] [ text "Classement" ]
                 :: List.map standingsTable s.standings
             )
 
@@ -892,7 +892,7 @@ viewBoard : Sel -> Dict String String -> Html Msg
 viewBoard s names =
     div [ class "panel" ]
         [ div [ class "row" ]
-            [ h2 [] [ text "Plateau" ]
+            [ h2 [] [ text "Terrains" ]
             , button [ onClick Dispatch ] [ text "⟳ Dispatch auto" ]
             ]
         , if List.isEmpty s.view.courts then
