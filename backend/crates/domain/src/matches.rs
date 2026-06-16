@@ -244,6 +244,17 @@ impl Aggregate for Match {
                     MatchStatus::InProgress => {}
                 }
                 let format = self.format.expect("scheduled match has a format");
+
+                // Defense in depth: never record a set into an already-decided
+                // match, even if the status still reads InProgress (guards a
+                // malformed stream). The status check above covers the normal
+                // path; this covers the impossible-by-construction one.
+                let (wins_a, wins_b) = self.set_wins();
+                let needed = format.sets_to_win();
+                if wins_a >= needed || wins_b >= needed {
+                    return Err(MatchError::AlreadyCompleted);
+                }
+
                 let set = SetScore::new(a, b)?;
 
                 // `write` applies the event immediately, so `set_wins` below

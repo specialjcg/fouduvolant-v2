@@ -18,6 +18,25 @@ use std::collections::HashMap;
 use crate::ids::{CourtId, MatchId};
 use crate::matches::MatchEvent;
 use crate::scheduling::{MatchView, SchedStatus};
+use crate::score::{MatchFormat, SetOutcome};
+
+/// Per-match scoring progress, kept private so the read model can reject set
+/// events a *decided* match should never receive. Heals malformed legacy streams
+/// (e.g. a duplicate `SetRecorded` that would otherwise sum 21+21 = 42) on
+/// replay without touching the immutable event store.
+#[derive(Debug, Clone, Copy)]
+struct Progress {
+    format: MatchFormat,
+    wins_a: u8,
+    wins_b: u8,
+}
+
+impl Progress {
+    fn decided(&self) -> bool {
+        let needed = self.format.sets_to_win();
+        self.wins_a >= needed || self.wins_b >= needed
+    }
+}
 
 /// Folds `Match` events into [`MatchView`]s, keyed by match id.
 ///
@@ -26,6 +45,7 @@ use crate::scheduling::{MatchView, SchedStatus};
 #[derive(Debug, Default)]
 pub struct MatchProjection {
     views: HashMap<MatchId, MatchView>,
+    progress: HashMap<MatchId, Progress>,
     next_seq: u32,
     next_done: u32,
 }
@@ -45,10 +65,19 @@ impl MatchProjection {
                 team_a,
                 team_b,
                 pool_id,
+                format,
                 ..
             } => {
                 let seq = self.next_seq;
                 self.next_seq += 1;
+                self.progress.insert(
+                    id,
+                    Progress {
+                        format: *format,
+                        wins_a: 0,
+                        wins_b: 0,
+                    },
+                );
                 self.views.insert(
                     id,
                     MatchView {
@@ -75,6 +104,17 @@ impl MatchProjection {
                 }
             }
             MatchEvent::SetRecorded { set } => {
+                // Drop any set a decided match should never have received — a
+                // malformed/legacy stream would otherwise sum points (21+21=42).
+                if let Some(p) = self.progress.get_mut(&id) {
+                    if p.decided() {
+                        return;
+                    }
+                    match set.winner() {
+                        SetOutcome::SideA => p.wins_a += 1,
+                        SetOutcome::SideB => p.wins_b += 1,
+                    }
+                }
                 if let Some(v) = self.views.get_mut(&id) {
                     v.points_a += u16::from(set.a());
                     v.points_b += u16::from(set.b());
@@ -89,6 +129,21 @@ impl MatchProjection {
                 }
             }
             MatchEvent::Rescored { set, winner } => {
+                // A correction replaces the score with one decisive set, so the
+                // match is now decided — reset progress to match.
+                if let Some(p) = self.progress.get_mut(&id) {
+                    let needed = p.format.sets_to_win();
+                    match set.winner() {
+                        SetOutcome::SideA => {
+                            p.wins_a = needed;
+                            p.wins_b = 0;
+                        }
+                        SetOutcome::SideB => {
+                            p.wins_a = 0;
+                            p.wins_b = needed;
+                        }
+                    }
+                }
                 if let Some(v) = self.views.get_mut(&id) {
                     v.points_a = u16::from(set.a());
                     v.points_b = u16::from(set.b());
@@ -169,6 +224,60 @@ mod tests {
         let v = proj.get(id).unwrap();
         assert_eq!(v.status, SchedStatus::Done);
         assert_eq!(v.done_order, Some(0));
+    }
+
+    #[test]
+    fn duplicate_set_does_not_double_points() {
+        // Regression: a malformed/legacy stream with two SetRecorded on a
+        // BestOf1 match must not sum 21+21 = 42. The second set lands on an
+        // already-decided match and is dropped on replay.
+        let mut proj = MatchProjection::new();
+        let (id, pool) = (MatchId::new(), PoolId::new());
+        let (a, b) = (TeamId::new(), TeamId::new());
+
+        proj.apply(id, &scheduled(id, pool, a, b));
+        proj.apply(id, &MatchEvent::MatchStarted { court_id: CourtId::new() });
+        proj.apply(
+            id,
+            &MatchEvent::SetRecorded { set: SetScore::new(21, 15).unwrap() },
+        );
+        // Duplicate — must be ignored.
+        proj.apply(
+            id,
+            &MatchEvent::SetRecorded { set: SetScore::new(21, 10).unwrap() },
+        );
+
+        let v = proj.get(id).unwrap();
+        assert_eq!(v.points_a, 21, "points must not double to 42");
+        assert_eq!(v.points_b, 15, "loser keeps the first set's points");
+    }
+
+    #[test]
+    fn rescore_then_stray_set_is_ignored() {
+        // After a correction the match is decided; a stray SetRecorded that
+        // follows must not re-open scoring.
+        let mut proj = MatchProjection::new();
+        let (id, pool) = (MatchId::new(), PoolId::new());
+        let (a, b) = (TeamId::new(), TeamId::new());
+
+        proj.apply(id, &scheduled(id, pool, a, b));
+        proj.apply(id, &MatchEvent::MatchStarted { court_id: CourtId::new() });
+        proj.apply(
+            id,
+            &MatchEvent::SetRecorded { set: SetScore::new(21, 15).unwrap() },
+        );
+        proj.apply(
+            id,
+            &MatchEvent::Rescored { set: SetScore::new(21, 18).unwrap(), winner: a },
+        );
+        proj.apply(
+            id,
+            &MatchEvent::SetRecorded { set: SetScore::new(21, 5).unwrap() },
+        );
+
+        let v = proj.get(id).unwrap();
+        assert_eq!(v.points_a, 21);
+        assert_eq!(v.points_b, 18, "rescore value stands, stray set ignored");
     }
 
     #[test]
