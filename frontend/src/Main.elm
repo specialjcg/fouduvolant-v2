@@ -1323,7 +1323,10 @@ thirdPlaceRound =
     255
 
 
-{-| One bracket (main or consolation) drawn as a column-per-round tree. -}
+{-| One bracket (main/consolation) as a deterministic positioned tree with
+connector lines, reproducing the original look. Binary rounds spread evenly over
+the height; barrages spread over their own (denser) count, each connected to the
+round-1 match it feeds. -}
 bracketTree : String -> List BracketNode -> Html Msg
 bracketTree title nodes =
     if List.isEmpty nodes then
@@ -1339,79 +1342,203 @@ bracketTree title nodes =
                     |> Maybe.withDefault 1
 
             barrages =
-                List.filter (\n -> n.round == 0) nodes
-
-            round1 =
-                List.filter (\n -> n.round == 1) nodes |> List.sortBy .index
+                nodes
+                    |> List.filter (\n -> n.round == 0)
+                    |> List.sortBy (\n -> ( Maybe.withDefault 0 n.feeds, n.index ))
 
             thirdNodes =
                 List.filter (\n -> n.round == thirdPlaceRound) nodes
 
-            mainColumns =
-                List.map
-                    (\r -> roundColumn maxRound r (List.filter (\n -> n.round == r) nodes))
-                    (List.range 1 maxRound)
+            hasBarr =
+                not (List.isEmpty barrages)
 
-            columns =
-                (if List.isEmpty barrages then
-                    []
+            countOf r =
+                List.length (List.filter (\n -> n.round == r) nodes)
+
+            r1c =
+                Basics.max 1 (countOf 1)
+
+            rows =
+                toFloat (Basics.max r1c (List.length barrages))
+
+            totalH =
+                rows * brkCell
+
+            colOf r =
+                if hasBarr then
+                    r
+
+                else
+                    r - 1
+
+            maxCol =
+                if hasBarr then
+                    maxRound
+
+                else
+                    maxRound - 1
+
+            xOf c =
+                toFloat c * (brkBoxW + brkColGap)
+
+            cy count i =
+                brkTopPad + (toFloat i + 0.5) * totalH / toFloat (Basics.max 1 count)
+
+            barrEls =
+                barrages
+                    |> List.indexedMap
+                        (\k n ->
+                            let
+                                sy =
+                                    cy (List.length barrages) k
+
+                                ty =
+                                    cy r1c (Maybe.withDefault 0 n.feeds)
+                            in
+                            connector (xOf 0 + brkBoxW) sy (xOf (colOf 1)) ty
+                                ++ [ posBox (xOf 0) sy brkBarH n ]
+                        )
+                    |> List.concat
+
+            roundEls r =
+                List.filter (\n -> n.round == r) nodes
+                    |> List.sortBy .index
+                    |> List.map
+                        (\n ->
+                            let
+                                sy =
+                                    cy (countOf r) n.index
+
+                                conn =
+                                    if r < maxRound then
+                                        connector (xOf (colOf r) + brkBoxW) sy (xOf (colOf (r + 1))) (cy (countOf (r + 1)) (n.index // 2))
+
+                                    else
+                                        []
+                            in
+                            conn ++ [ posBox (xOf (colOf r)) sy brkBoxH n ]
+                        )
+                    |> List.concat
+
+            titles =
+                (if hasBarr then
+                    [ titleAt (xOf 0) "Barrages" ]
 
                  else
-                    [ barrageColumn round1 barrages ]
+                    []
                 )
-                    ++ mainColumns
-                    ++ (if List.isEmpty thirdNodes then
-                            []
+                    ++ List.map (\r -> titleAt (xOf (colOf r)) (roundLabel maxRound r)) (List.range 1 maxRound)
 
-                        else
-                            [ thirdColumn thirdNodes ]
-                       )
+            boxesAndLines =
+                barrEls ++ List.concatMap roundEls (List.range 1 maxRound)
         in
         div []
             [ h3 [] [ text title ]
-            , div [ class "bracket" ] columns
+            , div [ class "bracket" ]
+                [ div
+                    [ class "bracket-abs"
+                    , Html.Attributes.style "width" (px (xOf maxCol + brkBoxW))
+                    , Html.Attributes.style "height" (px (totalH + brkTopPad + brkBoxH))
+                    ]
+                    (titles ++ boxesAndLines)
+                ]
+            , if List.isEmpty thirdNodes then
+                text ""
+
+              else
+                div [ class "brk-third" ]
+                    (span [ class "brk-third-label" ] [ text "3e place" ]
+                        :: List.map plainBox thirdNodes
+                    )
             ]
 
 
-roundColumn : Int -> Int -> List BracketNode -> Html Msg
-roundColumn maxRound r nodes =
-    div [ class "round" ]
-        [ div [ class "round-title" ] [ text (roundLabel maxRound r) ]
-        , div [ class "round-body" ]
-            (List.map matchBox (List.sortBy .index nodes))
+brkCell : Float
+brkCell =
+    54
+
+
+brkBoxW : Float
+brkBoxW =
+    168
+
+
+brkBoxH : Float
+brkBoxH =
+    44
+
+
+brkBarH : Float
+brkBarH =
+    40
+
+
+brkColGap : Float
+brkColGap =
+    78
+
+
+brkTopPad : Float
+brkTopPad =
+    34
+
+
+px : Float -> String
+px f =
+    String.fromFloat f ++ "px"
+
+
+titleAt : Float -> String -> Html Msg
+titleAt x label =
+    div
+        [ class "brk-title"
+        , Html.Attributes.style "left" (px x)
+        , Html.Attributes.style "width" (px brkBoxW)
         ]
+        [ text label ]
 
 
-thirdColumn : List BracketNode -> Html Msg
-thirdColumn nodes =
-    div [ class "round" ]
-        [ div [ class "round-title" ] [ text "3e place" ]
-        , div [ class "round-body" ] (List.map matchBox nodes)
+posBox : Float -> Float -> Float -> BracketNode -> Html Msg
+posBox x cyc h n =
+    div
+        [ class "bmatch"
+        , Html.Attributes.style "position" "absolute"
+        , Html.Attributes.style "left" (px x)
+        , Html.Attributes.style "top" (px (cyc - h / 2))
+        , Html.Attributes.style "width" (px brkBoxW)
+        , Html.Attributes.style "min-height" (px h)
         ]
+        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner ]
 
 
-{-| Preliminary (barrage / pré-tour) column, one row per round-1 match so each
-barrage sits facing the match its winner feeds. A match fed by two barrages
-shows both stacked; one with no barrage gets an invisible ghost to keep rows
-aligned with the round-1 column. -}
-barrageColumn : List BracketNode -> List BracketNode -> Html Msg
-barrageColumn round1 barrages =
-    div [ class "round" ]
-        [ div [ class "round-title" ] [ text "Barrages" ]
-        , div [ class "round-body" ]
-            (List.map
-                (\m ->
-                    case List.filter (\b -> b.feeds == Just m.index) barrages of
-                        [] ->
-                            div [ class "bmatch ghost" ]
-                                [ seedRow Nothing Nothing, seedRow Nothing Nothing ]
+plainBox : BracketNode -> Html Msg
+plainBox n =
+    div [ class "bmatch", Html.Attributes.style "width" (px brkBoxW) ]
+        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner ]
 
-                        fed ->
-                            div [ class "barrage-group" ] (List.map matchBox fed)
-                )
-                round1
-            )
+
+connector : Float -> Float -> Float -> Float -> List (Html Msg)
+connector x1 y1 x2 y2 =
+    let
+        mx =
+            (x1 + x2) / 2
+    in
+    [ lnDiv (Basics.min x1 mx) y1 (abs (mx - x1)) 1
+    , lnDiv mx (Basics.min y1 y2) 1 (abs (y2 - y1))
+    , lnDiv (Basics.min mx x2) y2 (abs (x2 - mx)) 1
+    ]
+
+
+lnDiv : Float -> Float -> Float -> Float -> Html Msg
+lnDiv x y w h =
+    div
+        [ class "ln"
+        , Html.Attributes.style "left" (px x)
+        , Html.Attributes.style "top" (px y)
+        , Html.Attributes.style "width" (px w)
+        , Html.Attributes.style "height" (px h)
         ]
+        []
 
 
 roundLabel : Int -> Int -> String
@@ -1438,14 +1565,6 @@ roundLabel maxRound r =
 
             n ->
                 "Tour de " ++ String.fromInt n
-
-
-matchBox : BracketNode -> Html Msg
-matchBox n =
-    div [ class "bmatch" ]
-        [ seedRow n.teamA n.winner
-        , seedRow n.teamB n.winner
-        ]
 
 
 seedRow : Maybe String -> Maybe String -> Html Msg

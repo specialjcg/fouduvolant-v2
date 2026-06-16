@@ -196,37 +196,31 @@
     /* nodes already decided (contiennent une flèche) gardent le gris ; on dore via :has */
     .finals .match:has(.muted) { box-shadow:inset 0 0 0 1px rgba(255,255,255,.25); }
 
-    /* ===== Bracket en arbre (colonnes par tour) ===== */
-    .finals .bracket {
-      display:flex; gap:2.2rem; overflow-x:auto;
-      padding:.5rem 0 1rem; align-items:stretch; margin-bottom:1.2rem;
+    /* ===== Bracket : arbre positionné (px déterministe) + connecteurs ===== */
+    .finals .bracket { overflow-x:auto; padding:.5rem 0 1rem; margin-bottom:1.2rem; }
+    .finals .bracket-abs { position:relative; }
+    .finals .brk-title {
+      position:absolute; top:4px; text-align:center;
+      font-family:"Oswald", sans-serif; font-size:.66rem; letter-spacing:.16em;
+      text-transform:uppercase; color:#8a8a96;
     }
-    .finals .round { display:flex; flex-direction:column; min-width:170px; flex:0 0 auto; }
-    .finals .round-title {
-      font-family:"Oswald", sans-serif; font-size:.68rem; letter-spacing:.18em;
-      text-transform:uppercase; color:#8a8a96; text-align:center; margin-bottom:.5rem;
-    }
-    .finals .round-body { display:flex; flex-direction:column; justify-content:space-around; flex:1; gap:.55rem; }
     .finals .bmatch {
-      position:relative; background:linear-gradient(180deg,#26262e,#1a1a20);
-      border:1px solid #34343c; border-radius:var(--r-md); overflow:hidden;
+      background:linear-gradient(180deg,#26262e,#1a1a20);
+      border:1px solid #34343c; border-radius:var(--r-md); overflow:hidden; z-index:2;
     }
     .finals .seed {
-      display:flex; align-items:center; padding:.32rem .55rem;
-      font-size:.85rem; color:#d6d6de; min-height:1.55rem;
+      display:flex; align-items:center; padding:.28rem .5rem;
+      font-size:.82rem; color:#d6d6de;
     }
     .finals .seed + .seed { border-top:1px solid #34343c; }
     .finals .seed.win { color:#f4d98a; font-weight:700; background:rgba(244,217,138,.08); }
     .finals .seed .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    /* petit connecteur horizontal vers la colonne suivante */
-    .finals .round:not(:last-child) .bmatch::after {
-      content:""; position:absolute; right:-1.1rem; top:50%;
-      width:1.1rem; height:1px; background:#34343c;
+    .finals .ln { position:absolute; background:#4a4a54; z-index:1; }
+    .finals .brk-third { display:flex; align-items:center; gap:.8rem; margin-top:.6rem; }
+    .finals .brk-third-label {
+      font-family:"Oswald", sans-serif; font-size:.66rem; letter-spacing:.16em;
+      text-transform:uppercase; color:var(--gold2);
     }
-    /* colonne barrages : alignée 1 ligne par match du tour 1 */
-    .finals .barrage-group { display:flex; flex-direction:column; gap:.4rem; }
-    .finals .bmatch.ghost { visibility:hidden; }
-    .finals .bmatch.ghost::after { display:none; }
   </style>
 </head>
 <body>
