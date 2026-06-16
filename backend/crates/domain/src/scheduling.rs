@@ -284,6 +284,48 @@ fn pick_for_court(
     None
 }
 
+/// Full forecast: the ordered list of every match each court will host.
+///
+/// A match goes to the court it played/plays on if known, otherwise to the court
+/// of its pool (explicit `pool_court_map`, else the greedy default). Within a
+/// court, finished matches come first (by completion order), then the one in
+/// progress, then the pending ones in creation order — giving the "prévisionnel".
+#[must_use]
+pub fn forecast(
+    matches: &[MatchView],
+    courts: &[CourtId],
+    pool_court_map: &HashMap<PoolId, CourtId>,
+) -> Vec<(CourtId, Vec<MatchId>)> {
+    let owned;
+    let map: &HashMap<PoolId, CourtId> = if pool_court_map.is_empty() {
+        owned = assign_pools_to_courts(matches, courts);
+        &owned
+    } else {
+        pool_court_map
+    };
+
+    let court_of = |m: &MatchView| -> Option<CourtId> {
+        m.court.or_else(|| m.pool.and_then(|p| map.get(&p).copied()))
+    };
+    let rank = |m: &MatchView| -> (u8, u32) {
+        match m.status {
+            SchedStatus::Done => (0, m.done_order.unwrap_or(0)),
+            SchedStatus::Playing => (1, m.seq),
+            SchedStatus::Pending => (2, m.seq),
+        }
+    };
+
+    courts
+        .iter()
+        .map(|&court| {
+            let mut ms: Vec<&MatchView> =
+                matches.iter().filter(|m| court_of(m) == Some(court)).collect();
+            ms.sort_by_key(|m| rank(m));
+            (court, ms.into_iter().map(|m| m.id).collect())
+        })
+        .collect()
+}
+
 /// Compute the dispatch plan for every court.
 ///
 /// `pool_court_map` may be empty, in which case a greedy default is computed and

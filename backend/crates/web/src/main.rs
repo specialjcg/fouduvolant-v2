@@ -77,6 +77,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/dispatch", post(dispatch))
         .route("/tournaments/{id}/board", get(board))
         .route("/tournaments/{id}/standings", get(standings))
+        .route("/tournaments/{id}/schedule", get(schedule))
         .route("/tournaments/{id}/bracket", get(get_bracket).post(generate_bracket))
         .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
         .route("/matches/{id}/start", post(start_match))
@@ -458,6 +459,13 @@ async fn standings(
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     Ok(Json(app.standings(TournamentId(id)).await?).into_response())
+}
+
+async fn schedule(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    Ok(Json(app.schedule(TournamentId(id)).await?).into_response())
 }
 
 async fn get_bracket(

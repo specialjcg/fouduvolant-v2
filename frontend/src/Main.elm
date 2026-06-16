@@ -50,6 +50,7 @@ type alias Sel =
     , teamB : String
     , scores : Dict String ( String, String )
     , standings : List PoolStandings
+    , schedule : List ForecastCourt
     , bracket : List BracketNode
     , perPool : String
     , step : Step
@@ -116,6 +117,22 @@ type alias Board =
     { courts : List CourtPlan, matches : List MatchV }
 
 
+type alias ForecastCourt =
+    { court : String, matches : List ForecastMatch }
+
+
+type alias ForecastMatch =
+    { id : String
+    , teamA : String
+    , teamB : String
+    , pool : Maybe String
+    , status : String
+    , pointsA : Int
+    , pointsB : Int
+    , etaMin : Int
+    }
+
+
 type alias CourtPlan =
     { court : String, current : Maybe String, next : Maybe Sugg, previews : List Sugg }
 
@@ -133,6 +150,7 @@ type alias MatchV =
     , doneOrder : Maybe Int
     , pointsA : Int
     , pointsB : Int
+    , pool : Maybe String
     }
 
 
@@ -201,6 +219,7 @@ type Msg
     | GotView (Result Http.Error TView)
     | GotBoard (Result Http.Error Board)
     | GotStandings (Result Http.Error (List PoolStandings))
+    | GotSchedule (Result Http.Error (List ForecastCourt))
     | GotBracket (Result Http.Error (List BracketNode))
     | SetPerPool String
     | GenBracket
@@ -293,6 +312,12 @@ update msg model =
             ( { model | sel = Maybe.map (\s -> { s | standings = st }) model.sel }, Cmd.none )
 
         GotStandings (Err _) ->
+            ( model, Cmd.none )
+
+        GotSchedule (Ok sc) ->
+            ( { model | sel = Maybe.map (\s -> { s | schedule = sc }) model.sel }, Cmd.none )
+
+        GotSchedule (Err _) ->
             ( model, Cmd.none )
 
         GotBracket (Ok b) ->
@@ -597,6 +622,7 @@ mergeView wantStep prev v =
             , teamB = ""
             , scores = Dict.empty
             , standings = []
+            , schedule = []
             , bracket = []
             , perPool = "2"
             , step = wantStep
@@ -623,7 +649,13 @@ withSel model f =
 
 openCmds : String -> String -> Cmd Msg
 openCmds api id =
-    Cmd.batch [ loadView api id, loadBoard api id, loadStandings api id, loadBracket api id ]
+    Cmd.batch
+        [ loadView api id
+        , loadBoard api id
+        , loadStandings api id
+        , loadBracket api id
+        , loadSchedule api id
+        ]
 
 
 refresh : Model -> Cmd Msg
@@ -644,6 +676,7 @@ refreshBoard model =
                 [ loadBoard model.api s.id
                 , loadStandings model.api s.id
                 , loadBracket model.api s.id
+                , loadSchedule model.api s.id
                 ]
 
         Nothing ->
@@ -687,6 +720,14 @@ loadStandings api id =
     Http.get
         { url = api ++ "/tournaments/" ++ id ++ "/standings"
         , expect = Http.expectJson GotStandings (D.list poolStandingsDec)
+        }
+
+
+loadSchedule : String -> String -> Cmd Msg
+loadSchedule api id =
+    Http.get
+        { url = api ++ "/tournaments/" ++ id ++ "/schedule"
+        , expect = Http.expectJson GotSchedule (D.list forecastCourtDec)
         }
 
 
@@ -938,6 +979,26 @@ bracketNodeDec =
         (D.field "winner" (D.nullable D.string))
 
 
+forecastCourtDec : D.Decoder ForecastCourt
+forecastCourtDec =
+    D.map2 ForecastCourt
+        (D.field "court" D.string)
+        (D.field "matches" (D.list forecastMatchDec))
+
+
+forecastMatchDec : D.Decoder ForecastMatch
+forecastMatchDec =
+    D.map8 ForecastMatch
+        (D.field "id" D.string)
+        (D.field "team_a" D.string)
+        (D.field "team_b" D.string)
+        (D.field "pool" (D.nullable D.string))
+        (D.field "status" D.string)
+        (D.field "points_a" D.int)
+        (D.field "points_b" D.int)
+        (D.field "eta_min" D.int)
+
+
 poolStandingsDec : D.Decoder PoolStandings
 poolStandingsDec =
     D.map3 PoolStandings
@@ -958,17 +1019,23 @@ rowDec =
         (D.field "diff" D.int)
 
 
+andMap : D.Decoder a -> D.Decoder (a -> b) -> D.Decoder b
+andMap =
+    D.map2 (|>)
+
+
 matchVDec : D.Decoder MatchV
 matchVDec =
-    D.map8 MatchV
-        (D.field "id" D.string)
-        (D.field "team_a" D.string)
-        (D.field "team_b" D.string)
-        (D.field "status" D.string)
-        (D.field "court" (D.nullable D.string))
-        (D.field "done_order" (D.nullable D.int))
-        (D.field "points_a" D.int)
-        (D.field "points_b" D.int)
+    D.succeed MatchV
+        |> andMap (D.field "id" D.string)
+        |> andMap (D.field "team_a" D.string)
+        |> andMap (D.field "team_b" D.string)
+        |> andMap (D.field "status" D.string)
+        |> andMap (D.field "court" (D.nullable D.string))
+        |> andMap (D.field "done_order" (D.nullable D.int))
+        |> andMap (D.field "points_a" D.int)
+        |> andMap (D.field "points_b" D.int)
+        |> andMap (D.field "pool" (D.nullable D.string))
 
 
 
@@ -1452,7 +1519,71 @@ viewBoard s names =
           else
             div [ class "lanes" ] (List.indexedMap (viewLane s names) s.board.courts)
         , viewPending s names
+        , viewForecast s
         ]
+
+
+{-| Prévisionnel : liste complète des matchs par terrain, avec heure estimée. -}
+viewForecast : Sel -> Html Msg
+viewForecast s =
+    if List.all (\fc -> List.isEmpty fc.matches) s.schedule then
+        text ""
+
+    else
+        div [ Html.Attributes.style "margin-top" "1.2rem" ]
+            (h3 [ class "muted" ] [ text "Prévisionnel par terrain (≈15 min/match)" ]
+                :: List.indexedMap forecastCourtView s.schedule
+            )
+
+
+forecastCourtView : Int -> ForecastCourt -> Html Msg
+forecastCourtView idx fc =
+    div [ Html.Attributes.style "margin-bottom" ".8rem" ]
+        [ h4 [ Html.Attributes.style "margin" ".3rem 0", Html.Attributes.style "color" "var(--primary)" ]
+            [ text ("Terrain " ++ String.fromInt (idx + 1)) ]
+        , table []
+            (tr []
+                [ th [] [ text "≈ Heure" ]
+                , th [] [ text "Poule" ]
+                , th [] [ text "Match" ]
+                , th [] [ text "Score" ]
+                ]
+                :: List.map forecastRow fc.matches
+            )
+        ]
+
+
+forecastRow : ForecastMatch -> Html Msg
+forecastRow m =
+    let
+        score =
+            if m.status == "Done" then
+                String.fromInt m.pointsA ++ "-" ++ String.fromInt m.pointsB
+
+            else if m.status == "Playing" then
+                "en cours"
+
+            else
+                "—"
+    in
+    tr []
+        [ td [] [ text ("+" ++ fmtEta m.etaMin) ]
+        , td [] [ text (Maybe.withDefault "" m.pool) ]
+        , td [] [ text (m.teamA ++ " vs " ++ m.teamB) ]
+        , td [] [ text score ]
+        ]
+
+
+fmtEta : Int -> String
+fmtEta mins =
+    let
+        h =
+            mins // 60
+
+        mm =
+            modBy 60 mins
+    in
+    String.fromInt h ++ "h" ++ String.padLeft 2 '0' (String.fromInt mm)
 
 
 {-| One court as a horizontal timeline: completed (left) → current → next →
@@ -1635,16 +1766,28 @@ viewPending s names =
         text ""
 
     else
+        let
+            poolNames =
+                Dict.fromList (List.map (\p -> ( p.id, p.name )) s.view.pools)
+        in
         div []
             [ h3 [ class "muted" ] [ text "En attente — proposer un terrain" ]
-            , div [] (List.map (pendingRow names freeCourts) queue)
+            , div [] (List.map (pendingRow poolNames names freeCourts) queue)
             ]
 
 
-pendingRow : Dict String String -> List ( Int, String ) -> MatchV -> Html Msg
-pendingRow names freeCourts m =
+pendingRow : Dict String String -> Dict String String -> List ( Int, String ) -> MatchV -> Html Msg
+pendingRow poolNames names freeCourts m =
     div [ class "match row", Html.Attributes.style "justify-content" "space-between" ]
-        [ span [] [ text (matchLabel names m) ]
+        [ span []
+            [ case m.pool |> Maybe.andThen (\pid -> Dict.get pid poolNames) of
+                Just pn ->
+                    span [ class "pill", Html.Attributes.style "margin-right" ".4rem" ] [ text pn ]
+
+                Nothing ->
+                    text ""
+            , text (matchLabel names m)
+            ]
         , div [ class "row" ]
             (if List.isEmpty freeCourts then
                 [ span [ class "muted", Html.Attributes.style "font-size" ".8rem" ] [ text "terrains occupés" ] ]

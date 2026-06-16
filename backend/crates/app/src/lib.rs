@@ -21,7 +21,7 @@ use domain::generation::round_robin_pairs;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
 use domain::matches::{Match, MatchCommand, MatchError, MatchEvent};
 use domain::projections::MatchProjection;
-use domain::scheduling::{plan, CourtPlan, MatchView, SchedStatus};
+use domain::scheduling::{forecast, plan, CourtPlan, MatchView, SchedStatus};
 use domain::score::MatchFormat;
 use domain::standings::{pool_standings, MatchResult};
 use domain::tournament::{
@@ -115,6 +115,39 @@ pub struct PoolStandingsView {
     /// Ranked rows.
     pub rows: Vec<StandingRow>,
 }
+
+/// One match in a court's forecast, with names + estimated start offset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastMatch {
+    /// Match id.
+    pub id: MatchId,
+    /// First side name.
+    pub team_a: String,
+    /// Second side name.
+    pub team_b: String,
+    /// Pool name (None for bracket).
+    pub pool: Option<String>,
+    /// Scheduling status.
+    pub status: SchedStatus,
+    /// Points side A.
+    pub points_a: u16,
+    /// Points side B.
+    pub points_b: u16,
+    /// Estimated start, minutes from the start of this court's schedule.
+    pub eta_min: u32,
+}
+
+/// A court's full forecast (prévisionnel).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastCourt {
+    /// Court id.
+    pub court: CourtId,
+    /// Ordered matches.
+    pub matches: Vec<ForecastMatch>,
+}
+
+/// Average match duration (minutes) used for the forecast.
+const MATCH_MINUTES: u32 = 15;
 
 /// The live board for a tournament: court plans plus the underlying matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,6 +576,65 @@ impl App {
             courts: plans,
             matches,
         })
+    }
+
+    /// Full per-court forecast (prévisionnel) with names and estimated times.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a store or deserialization failure.
+    pub async fn schedule(
+        &self,
+        tournament_id: TournamentId,
+    ) -> Result<Vec<ForecastCourt>, AppError> {
+        let courts = self.tournament_courts(tournament_id).await?;
+        let map = self.pool_court_map(tournament_id).await?;
+        let views: Vec<MatchView> = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .filter(|v| v.tournament == tournament_id)
+            .collect();
+        let by_id: std::collections::HashMap<MatchId, MatchView> =
+            views.iter().map(|v| (v.id, v.clone())).collect();
+
+        let (team_names, pool_names) = match self.tournament_view(tournament_id).await? {
+            Some(view) => (
+                view.teams
+                    .iter()
+                    .map(|t| (t.id, t.name.clone()))
+                    .collect::<std::collections::HashMap<_, _>>(),
+                view.pools
+                    .iter()
+                    .map(|p| (p.id, p.name.clone()))
+                    .collect::<std::collections::HashMap<_, _>>(),
+            ),
+            None => Default::default(),
+        };
+        let name = |id: TeamId| team_names.get(&id).cloned().unwrap_or_default();
+
+        Ok(forecast(&views, &courts, &map)
+            .into_iter()
+            .map(|(court, ids)| ForecastCourt {
+                court,
+                matches: ids
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, id)| {
+                        by_id.get(&id).map(|v| ForecastMatch {
+                            id,
+                            team_a: name(v.team_a),
+                            team_b: name(v.team_b),
+                            pool: v.pool.and_then(|p| pool_names.get(&p).cloned()),
+                            status: v.status,
+                            points_a: v.points_a,
+                            points_b: v.points_b,
+                            eta_min: i as u32 * MATCH_MINUTES,
+                        })
+                    })
+                    .collect(),
+            })
+            .collect())
     }
 
     /// Manual pool→court assignments, folded from the tournament events.
