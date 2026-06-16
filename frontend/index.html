@@ -202,13 +202,19 @@
   <script src="elm.js"></script>
   <script>
     var apiBase = (location.search.match(/[?&]api=([^&]+)/) || [])[1];
-    Elm.Main.init({
+    var app = Elm.Main.init({
       node: document.getElementById("app"),
       flags: {
         apiBase: apiBase ? decodeURIComponent(apiBase) : "",
-        open: location.hash.replace(/^#/, "")
+        open: location.hash.replace(/^#/, ""),
+        showPast: localStorage.getItem("showPast") === "1"
       }
     });
+    if (app.ports && app.ports.saveShowPast) {
+      app.ports.saveShowPast.subscribe(function (v) {
+        localStorage.setItem("showPast", v ? "1" : "0");
+      });
+    }
   </script>
 </body>
 </html>

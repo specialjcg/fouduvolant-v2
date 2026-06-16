@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 {-| Fou du Volant — Elm MVU frontend over the axum HTTP API.
 
@@ -19,11 +19,19 @@ import Time
 
 
 
+-- PORTS
+
+
+{-| Persist the "show past matches" toggle to localStorage (read back via flags). -}
+port saveShowPast : Bool -> Cmd msg
+
+
+
 -- MODEL
 
 
 type alias Flags =
-    { apiBase : String, open : String }
+    { apiBase : String, open : String, showPast : Bool }
 
 
 type alias Model =
@@ -33,6 +41,7 @@ type alias Model =
     , newName : String
     , err : Maybe String
     , wantStep : Step
+    , showPast : Bool
     }
 
 
@@ -172,6 +181,7 @@ init flags =
       , newName = ""
       , err = Nothing
       , wantStep = want
+      , showPast = flags.showPast
       }
     , Cmd.batch
         [ loadTournaments flags.apiBase
@@ -257,6 +267,7 @@ type Msg
     | Rescore String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
+    | ToggleShowPast
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -522,6 +533,13 @@ update msg model =
 
         StartMatch matchId courtId ->
             ( model, startMatch model.api matchId courtId )
+
+        ToggleShowPast ->
+            let
+                next =
+                    not model.showPast
+            in
+            ( { model | showPast = next }, saveShowPast next )
 
         SetScore matchId which v ->
             ( mapSel
@@ -1063,7 +1081,7 @@ view model =
                     text ""
             , case model.sel of
                 Just s ->
-                    viewTournament s
+                    viewTournament model.showPast s
 
                 Nothing ->
                     viewList model
@@ -1103,8 +1121,8 @@ tournamentRow t =
         ]
 
 
-viewTournament : Sel -> Html Msg
-viewTournament s =
+viewTournament : Bool -> Sel -> Html Msg
+viewTournament showPast s =
     let
         names =
             teamNames s.view.teams
@@ -1118,7 +1136,7 @@ viewTournament s =
                     viewPools s
 
                 StepBoard ->
-                    viewBoard s names
+                    viewBoard showPast s names
 
                 StepFinals ->
                     viewBracket s
@@ -1506,18 +1524,27 @@ courtSelect courts assigned poolId =
         )
 
 
-viewBoard : Sel -> Dict String String -> Html Msg
-viewBoard s names =
+viewBoard : Bool -> Sel -> Dict String String -> Html Msg
+viewBoard showPast s names =
     div [ class "panel" ]
         [ div [ class "row" ]
             [ h2 [] [ text "Terrains" ]
             , button [ onClick Dispatch ] [ text "⟳ Dispatch auto" ]
+            , button [ class "secondary", onClick ToggleShowPast ]
+                [ text
+                    (if showPast then
+                        "Cacher les matchs passés"
+
+                     else
+                        "Afficher les matchs passés"
+                    )
+                ]
             ]
         , if List.isEmpty s.view.courts then
             p [ class "muted" ] [ text "Aucun terrain configuré." ]
 
           else
-            div [ class "lanes" ] (List.indexedMap (viewLane s names) s.board.courts)
+            div [ class "lanes" ] (List.indexedMap (viewLane showPast s names) s.board.courts)
         , viewPending s names
         , viewForecast s
         ]
@@ -1588,13 +1615,19 @@ fmtEta mins =
 
 {-| One court as a horizontal timeline: completed (left) → current → next →
 previews (right). -}
-viewLane : Sel -> Dict String String -> Int -> CourtPlan -> Html Msg
-viewLane s names idx cp =
+viewLane : Bool -> Sel -> Dict String String -> Int -> CourtPlan -> Html Msg
+viewLane showPast s names idx cp =
     let
+        -- Past matches are hidden by default so the live match sits first; the
+        -- toggle reveals them on the left.
         completed =
-            s.board.matches
-                |> List.filter (\m -> m.status == "Done" && m.court == Just cp.court)
-                |> List.sortBy (\m -> Maybe.withDefault 0 m.doneOrder)
+            if showPast then
+                s.board.matches
+                    |> List.filter (\m -> m.status == "Done" && m.court == Just cp.court)
+                    |> List.sortBy (\m -> Maybe.withDefault 0 m.doneOrder)
+
+            else
+                []
 
         currentNode =
             cp.current
