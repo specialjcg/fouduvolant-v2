@@ -554,3 +554,108 @@ async fn regenerate_bracket_preserves_results_when_seeds_unchanged() {
         .find_map(|n| n.winner.clone());
     assert_eq!(final_winner.as_deref(), Some("A"), "real finals result survives a re-Générer");
 }
+
+/// Guarantee: the `per_pool` argument actually changes who qualifies — more
+/// per pool ⇒ a bigger main draw. Locks the behaviour behind the "2 ou 3 ne
+/// change rien" report (which was stale client JS, not the backend).
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn per_pool_changes_the_qualified_count() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "PerPool".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    // Two pools of three with a clear 1/2/3 ranking each.
+    let p1 = [TeamId::new(), TeamId::new(), TeamId::new()];
+    let p2 = [TeamId::new(), TeamId::new(), TeamId::new()];
+    for (i, id) in p1.iter().chain(p2.iter()).enumerate() {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: *id,
+                name: format!("T{i}"),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let (pool1, pool2) = (PoolId::new(), PoolId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![
+                Pool { id: pool1, name: "P1".into(), teams: p1.to_vec() },
+                Pool { id: pool2, name: "P2".into(), teams: p2.to_vec() },
+            ],
+        },
+    )
+    .await
+    .expect("pools");
+
+    let court = CourtId::new();
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![court] })
+        .await
+        .expect("courts");
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pools");
+
+    // In each pool: teams[0] wins both, teams[1] beats teams[2].
+    for p in [&p1, &p2] {
+        for (a, b) in [(p[0], p[1]), (p[0], p[2]), (p[1], p[2])] {
+            let m = MatchId::new();
+            app.match_cmd(
+                m,
+                MatchCommand::Schedule {
+                    match_id: m,
+                    tournament_id: t_id,
+                    format: MatchFormat::BestOf1,
+                    team_a: a,
+                    team_b: b,
+                    pool_id: Some(if p.as_ptr() == p1.as_ptr() { pool1 } else { pool2 }),
+                },
+            )
+            .await
+            .expect("schedule");
+            app.match_cmd(m, MatchCommand::Start { court_id: court }).await.expect("start");
+            app.match_cmd(m, MatchCommand::RecordSet { a: 21, b: 0 }).await.expect("record");
+        }
+    }
+
+    let main_count = |view: &[app::BracketNodeView]| -> usize {
+        let mut s = std::collections::HashSet::new();
+        for n in view {
+            if matches!(n.kind, BracketKind::Main) {
+                for t in [n.team_a.clone(), n.team_b.clone()].into_iter().flatten() {
+                    s.insert(t);
+                }
+            }
+        }
+        s.len()
+    };
+
+    app.generate_bracket(t_id, 1).await.expect("draw per_pool=1");
+    let one = main_count(&app.bracket_view(t_id).await.expect("view1"));
+
+    app.generate_bracket(t_id, 2).await.expect("draw per_pool=2");
+    let two = main_count(&app.bracket_view(t_id).await.expect("view2"));
+
+    assert_eq!(one, 2, "per_pool=1 → 1 team per pool in the main draw");
+    assert_eq!(two, 4, "per_pool=2 → 2 teams per pool in the main draw");
+    assert!(two > one, "raising per_pool enlarges the main draw");
+}
