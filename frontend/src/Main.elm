@@ -1533,6 +1533,7 @@ poolMatrix names matches p =
             (tr []
                 (th [] [ text "" ]
                     :: List.map (\t -> th [] [ text (shortName (nameOf names t)) ]) p.teams
+                    ++ [ th [] [ text "V" ], th [] [ text "D" ], th [] [ text "Pts" ], th [] [ text "Diff" ] ]
                 )
                 :: List.map (matrixRow names matches p.teams) p.teams
             )
@@ -1540,6 +1541,14 @@ poolMatrix names matches p =
 
 matrixRow : Dict String String -> List MatchV -> List String -> String -> Html Msg
 matrixRow names matches teams ti =
+    let
+        cell n =
+            td [ Html.Attributes.style "text-align" "center", Html.Attributes.style "font-weight" "600" ]
+                [ text (String.fromInt n) ]
+
+        stat =
+            teamStats matches teams ti
+    in
     tr []
         (td [ Html.Attributes.style "font-weight" "600" ] [ text (nameOf names ti) ]
             :: List.map
@@ -1555,7 +1564,82 @@ matrixRow names matches teams ti =
                         ]
                 )
                 teams
+            ++ [ cell stat.w
+               , cell stat.l
+               , cell stat.pf
+               , td [ Html.Attributes.style "text-align" "center", Html.Attributes.style "font-weight" "600" ]
+                    [ text (signed (stat.pf - stat.pa)) ]
+               ]
         )
+
+
+type alias TeamStat =
+    { w : Int, l : Int, pf : Int, pa : Int }
+
+
+{-| Wins / losses / points-for / points-against of `ti` over its played pool matches. -}
+teamStats : List MatchV -> List String -> String -> TeamStat
+teamStats matches teams ti =
+    List.foldl
+        (\tj acc ->
+            case playedScore matches ti tj of
+                Just ( mine, opp ) ->
+                    { w =
+                        acc.w
+                            + (if mine > opp then
+                                1
+
+                               else
+                                0
+                              )
+                    , l =
+                        acc.l
+                            + (if mine < opp then
+                                1
+
+                               else
+                                0
+                              )
+                    , pf = acc.pf + mine
+                    , pa = acc.pa + opp
+                    }
+
+                Nothing ->
+                    acc
+        )
+        { w = 0, l = 0, pf = 0, pa = 0 }
+        teams
+
+
+{-| Points of `i` vs `j` (own, opponent) when the match is actually played. -}
+playedScore : List MatchV -> String -> String -> Maybe ( Int, Int )
+playedScore matches i j =
+    if i == j then
+        Nothing
+
+    else
+        case List.head (List.filter (\m -> ( m.teamA, m.teamB ) == ( i, j ) || ( m.teamA, m.teamB ) == ( j, i )) matches) of
+            Just m ->
+                if m.pointsA == 0 && m.pointsB == 0 && m.status /= "Done" then
+                    Nothing
+
+                else if m.teamA == i then
+                    Just ( m.pointsA, m.pointsB )
+
+                else
+                    Just ( m.pointsB, m.pointsA )
+
+            Nothing ->
+                Nothing
+
+
+signed : Int -> String
+signed n =
+    if n > 0 then
+        "+" ++ String.fromInt n
+
+    else
+        String.fromInt n
 
 
 scoreBetween : List MatchV -> String -> String -> String
