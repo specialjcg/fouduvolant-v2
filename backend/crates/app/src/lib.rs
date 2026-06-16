@@ -381,6 +381,43 @@ impl App {
         Ok(out)
     }
 
+    /// Reset a tournament for a fresh launch: deletes all its matches and the
+    /// bracket draw, and reopens the draft (teams / pools / courts kept).
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a database or command failure.
+    pub async fn reset_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
+        let tid = tournament_id.to_string();
+        let match_subquery = "SELECT aggregate_id FROM events \
+             WHERE aggregate_type = 'Match' AND event_type = 'MatchScheduled' \
+             AND payload->'Scheduled'->>'tournament_id' = $1";
+        sqlx::query(&format!(
+            "DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
+        ))
+        .bind(&tid)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(&format!(
+            "DELETE FROM events WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
+        ))
+        .bind(&tid)
+        .execute(&self.pool)
+        .await?;
+        // Bracket aggregate shares the tournament id.
+        sqlx::query("DELETE FROM events WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
+            .bind(&tid)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
+            .bind(&tid)
+            .execute(&self.pool)
+            .await?;
+        self.tournament(tournament_id, TournamentCommand::ReopenDraft)
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+        Ok(())
+    }
+
     /// Hard-delete a tournament: removes its event streams (Tournament +
     /// Bracket, both keyed by the tournament id) and all its matches' streams.
     ///
@@ -481,6 +518,7 @@ impl App {
                 }
                 TournamentEvent::PoolPhaseStarted => view.phase = Phase::PoolPhase,
                 TournamentEvent::BracketPhaseStarted => view.phase = Phase::BracketPhase,
+                TournamentEvent::DraftReopened => view.phase = Phase::Draft,
             }
         }
         Ok(Some(view))

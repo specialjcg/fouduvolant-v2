@@ -104,6 +104,8 @@ pub enum TournamentCommand {
     StartPoolPhase,
     /// Begin the elimination bracket stage.
     StartBracketPhase,
+    /// Reopen the draft (after a reset) to allow editing teams/pools again.
+    ReopenDraft,
 }
 
 /// Events emitted by the [`Tournament`] aggregate.
@@ -157,6 +159,8 @@ pub enum TournamentEvent {
     PoolPhaseStarted,
     /// The bracket stage began.
     BracketPhaseStarted,
+    /// The tournament was reset to draft.
+    DraftReopened,
 }
 
 impl DomainEvent for TournamentEvent {
@@ -170,6 +174,7 @@ impl DomainEvent for TournamentEvent {
             TournamentEvent::PoolCourtAssigned { .. } => "PoolCourtAssigned",
             TournamentEvent::PoolPhaseStarted => "PoolPhaseStarted",
             TournamentEvent::BracketPhaseStarted => "BracketPhaseStarted",
+            TournamentEvent::DraftReopened => "DraftReopened",
         }
         .to_string()
     }
@@ -336,6 +341,12 @@ impl Aggregate for Tournament {
                 }
                 sink.write(TournamentEvent::BracketPhaseStarted, self).await;
             }
+
+            C::ReopenDraft => {
+                if self.phase != Phase::NotCreated {
+                    sink.write(TournamentEvent::DraftReopened, self).await;
+                }
+            }
         }
         Ok(())
     }
@@ -374,6 +385,9 @@ impl Aggregate for Tournament {
             }
             TournamentEvent::BracketPhaseStarted => {
                 self.phase = Phase::BracketPhase;
+            }
+            TournamentEvent::DraftReopened => {
+                self.phase = Phase::Draft;
             }
         }
     }

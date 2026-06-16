@@ -136,6 +136,13 @@
     button.secondary { background:var(--surface-2); color:var(--fg); border:1px solid var(--line); }
     button.secondary:hover { background:#e7ecf3; box-shadow:none; }
     button:disabled { opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
+    button.danger { background:var(--danger); color:#fff; }
+    button.danger:hover { background:#dc2626; box-shadow:0 8px 18px -8px rgb(239 68 68 /.55); }
+
+    .chip { display:inline-block; padding:.3rem .65rem; border-radius:var(--r-full);
+      background:var(--accent-bg); color:var(--primary); font-size:.82rem; font-weight:600;
+      border:1px solid var(--line); cursor:grab; user-select:none; }
+    .chip:active { cursor:grabbing; }
 
     input, select, textarea {
       font-family:inherit; font-size:.9rem; color:var(--fg);

@@ -11,7 +11,7 @@ import Browser
 import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes exposing (class, disabled, placeholder, type_, value)
-import Html.Events exposing (onClick, onInput)
+import Html.Events exposing (on, onClick, onInput, preventDefaultOn)
 import Http
 import Json.Decode as D
 import Json.Encode as E
@@ -55,6 +55,7 @@ type alias Sel =
     , step : Step
     , numPools : String
     , editing : Maybe String
+    , dragged : Maybe String
     }
 
 
@@ -216,6 +217,10 @@ type Msg
     | AutoPools
     | StartPools
     | StartFinals
+    | ResetTournament
+    | DragStart String
+    | DropOn String
+    | NoOp
     | SetCourts String
     | SaveCourts
     | GenPoolMatches String
@@ -426,6 +431,44 @@ update msg model =
         StartFinals ->
             withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-bracket") (E.object []) ))
 
+        ResetTournament ->
+            withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/reset") (E.object []) ))
+
+        DragStart teamId ->
+            ( mapSel (\s -> { s | dragged = Just teamId }) model, Cmd.none )
+
+        DropOn poolId ->
+            withSel model
+                (\s ->
+                    case s.dragged of
+                        Just tid ->
+                            let
+                                without t =
+                                    List.filter (\x -> x /= tid) t
+
+                                newPools =
+                                    s.view.pools
+                                        |> List.map
+                                            (\p ->
+                                                if p.id == poolId then
+                                                    ( p.name, without p.teams ++ [ tid ] )
+
+                                                else
+                                                    ( p.name, without p.teams )
+                                            )
+                                        |> List.filter (\( _, teams ) -> not (List.isEmpty teams))
+                            in
+                            ( mapSel (\x -> { x | dragged = Nothing }) model
+                            , postPools model.api s.id newPools
+                            )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+                )
+
+        NoOp ->
+            ( model, Cmd.none )
+
 
         SetTeamA s ->
             ( mapSel (\s_ -> { s_ | teamA = s }) model, Cmd.none )
@@ -559,6 +602,7 @@ mergeView wantStep prev v =
             , step = wantStep
             , numPools = String.fromInt (suggestPools (List.length v.teams))
             , editing = Nothing
+            , dragged = Nothing
             }
 
 
@@ -1142,7 +1186,18 @@ viewPools s =
                         |> Maybe.map .court
             in
             div []
-                (List.map (\p -> poolRow names s.view.courts s.board.matches (assignedOf p.id) p) s.view.pools)
+                [ if s.view.phase == "Draft" then
+                    p [ class "muted", Html.Attributes.style "font-size" ".82rem" ]
+                        [ text "Glisser-déposer une équipe d'une poule à l'autre pour rééquilibrer." ]
+
+                  else
+                    text ""
+                , div []
+                    (List.map
+                        (\pp -> poolRow (s.view.phase == "Draft") names s.view.courts s.board.matches (assignedOf pp.id) pp)
+                        s.view.pools
+                    )
+                ]
         , div [ class "row", Html.Attributes.style "margin-top" "1rem" ]
             [ button
                 [ onClick StartPools
@@ -1150,6 +1205,7 @@ viewPools s =
                 ]
                 [ text "Lancer les poules" ]
             , button [ class "secondary", onClick (GoStep StepBoard) ] [ text "Terrains →" ]
+            , button [ class "danger", onClick ResetTournament ] [ text "Réinitialiser (relancer à vide)" ]
             ]
         ]
 
@@ -1262,15 +1318,40 @@ standingsRow r =
         ]
 
 
-poolRow : Dict String String -> List String -> List MatchV -> Maybe String -> PoolV -> Html Msg
-poolRow names courts matches assigned p =
-    div [ class "match" ]
+poolRow : Bool -> Dict String String -> List String -> List MatchV -> Maybe String -> PoolV -> Html Msg
+poolRow editable names courts matches assigned p =
+    let
+        dropZone =
+            if editable then
+                [ preventDefaultOn "dragover" (D.succeed ( NoOp, True ))
+                , preventDefaultOn "drop" (D.succeed ( DropOn p.id, True ))
+                ]
+
+            else
+                []
+    in
+    div (class "match" :: dropZone)
         [ div [ class "row", Html.Attributes.style "justify-content" "space-between" ]
             [ span [ Html.Attributes.style "font-weight" "600" ] [ text p.name ]
             , courtSelect courts assigned p.id
             ]
-        , poolMatrix names matches p
+        , if editable then
+            div [ class "row", Html.Attributes.style "flex-wrap" "wrap", Html.Attributes.style "margin-top" ".4rem" ]
+                (List.map (teamChip names) p.teams)
+
+          else
+            poolMatrix names matches p
         ]
+
+
+teamChip : Dict String String -> String -> Html Msg
+teamChip names tid =
+    span
+        [ class "chip"
+        , Html.Attributes.draggable "true"
+        , on "dragstart" (D.succeed (DragStart tid))
+        ]
+        [ text (nameOf names tid) ]
 
 
 {-| Cross table of a pool's matches (équipe × équipe), score in each cell. -}
