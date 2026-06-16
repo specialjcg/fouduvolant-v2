@@ -21,7 +21,7 @@ use domain::generation::round_robin_pairs;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
 use domain::matches::{Match, MatchCommand, MatchError, MatchEvent};
 use domain::projections::MatchProjection;
-use domain::scheduling::{plan, CourtPlan, MatchView};
+use domain::scheduling::{plan, CourtPlan, MatchView, SchedStatus};
 use domain::score::MatchFormat;
 use domain::standings::{pool_standings, MatchResult};
 use domain::tournament::{
@@ -224,6 +224,27 @@ impl App {
         command: MatchCommand,
     ) -> Result<(), AggregateError<MatchError>> {
         self.matches.execute(&id.to_string(), command).await
+    }
+
+    /// Start a match on a court, refusing if another match is already in
+    /// progress on that court (avoids two live matches on one terrain).
+    ///
+    /// # Errors
+    /// Returns [`AppError`] if the court is busy, or on a command/store failure.
+    pub async fn start_match(
+        &self,
+        match_id: MatchId,
+        court_id: CourtId,
+    ) -> Result<(), AppError> {
+        let busy = self.match_projection().await?.views().iter().any(|v| {
+            v.court == Some(court_id) && v.status == SchedStatus::Playing && v.id != match_id
+        });
+        if busy {
+            return Err(AppError::Command("terrain déjà occupé".into()));
+        }
+        self.match_cmd(match_id, MatchCommand::Start { court_id })
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))
     }
 
     /// Scheduling process manager (pull-based).

@@ -409,13 +409,7 @@ async fn start_match(
     Path(id): Path<Uuid>,
     Json(body): Json<StartMatch>,
 ) -> Result<Response, ApiError> {
-    app.match_cmd(
-        MatchId(id),
-        MatchCommand::Start {
-            court_id: CourtId(body.court_id),
-        },
-    )
-    .await?;
+    app.start_match(MatchId(id), CourtId(body.court_id)).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

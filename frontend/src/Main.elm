@@ -480,7 +480,7 @@ update msg model =
                 (\s ->
                     case Dict.get matchId s.scores of
                         Just ( a, b ) ->
-                            case ( String.toInt a, String.toInt b ) of
+                            case ( parseScore a, parseScore b ) of
                                 ( Just na, Just nb ) ->
                                     ( model, recordSet model.api matchId na nb )
 
@@ -511,7 +511,7 @@ update msg model =
                 (\s ->
                     case Dict.get matchId s.scores of
                         Just ( a, b ) ->
-                            case ( String.toInt a, String.toInt b ) of
+                            case ( parseScore a, parseScore b ) of
                                 ( Just na, Just nb ) ->
                                     ( mapSel (\x -> { x | editing = Nothing }) model
                                     , rescore model.api matchId na nb
@@ -1326,6 +1326,16 @@ scoreBetween matches i j =
             ""
 
 
+{-| Parse a score input: empty means 0 (e.g. a 21-0 win). -}
+parseScore : String -> Maybe Int
+parseScore s =
+    if String.trim s == "" then
+        Just 0
+
+    else
+        String.toInt (String.trim s)
+
+
 shortName : String -> String
 shortName n =
     if String.length n <= 10 then
@@ -1383,7 +1393,7 @@ viewLane s names idx cp =
         nextNode =
             cp.next
                 |> Maybe.andThen (\sg -> Maybe.map (\m -> ( m, sg )) (findMatch s.board.matches sg.matchId))
-                |> Maybe.map (\( m, sg ) -> suggestNode names cp.court m sg)
+                |> Maybe.map (\( m, sg ) -> suggestNode (cp.current == Nothing) names cp.court m sg)
                 |> maybeList
 
         previewNodes =
@@ -1474,8 +1484,8 @@ liveNode s names m =
         ]
 
 
-suggestNode : Dict String String -> String -> MatchV -> Sugg -> Html Msg
-suggestNode names court m sg =
+suggestNode : Bool -> Dict String String -> String -> MatchV -> Sugg -> Html Msg
+suggestNode free names court m sg =
     div [ class "node suggest" ]
         [ nodeHead
             (if sg.needsRest then
@@ -1485,7 +1495,12 @@ suggestNode names court m sg =
                 "Suivant"
             )
         , div [ class "node-teams" ] [ text (matchLabel names m) ]
-        , button [ onClick (StartMatch m.id court) ] [ text "▶ Démarrer" ]
+        , if free then
+            button [ onClick (StartMatch m.id court) ] [ text "▶ Démarrer" ]
+
+          else
+            span [ class "muted", Html.Attributes.style "font-size" ".78rem" ]
+                [ text "à la fin du match en cours" ]
         ]
 
 
