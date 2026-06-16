@@ -57,6 +57,7 @@ async fn main() {
 
 fn router(app: Arc<App>) -> Router {
     Router::new()
+        .route("/", get(serve_index))
         .route("/tournaments", get(list_tournaments).post(create_tournament))
         .route(
             "/tournaments/{id}",
@@ -90,6 +91,23 @@ fn router(app: Arc<App>) -> Router {
 /// Directory of static frontend assets, overridable via `STATIC_DIR`.
 fn static_dir() -> String {
     std::env::var("STATIC_DIR").unwrap_or_else(|_| "static".to_string())
+}
+
+/// Serve `index.html` with `no-cache` so the browser always revalidates the HTML
+/// and picks up the current cache-busted `elm.js?v=…` (avoids stale UI).
+async fn serve_index() -> Response {
+    let path = format!("{}/index.html", static_dir());
+    match tokio::fs::read_to_string(&path).await {
+        Ok(html) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (axum::http::header::CACHE_CONTROL, "no-cache"),
+            ],
+            html,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 // ---- Requests / responses ----
