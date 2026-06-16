@@ -768,11 +768,18 @@ impl App {
             ));
         }
 
-        // Re-seed when a draw already exists but the finals haven't started:
-        // pool results entered *after* an early "Générer" must be able to fix a
-        // seeding that was frozen on empty (all-zero) standings. Refuse once a
-        // finals match has been played or placed on a court, so no result is lost.
-        if self.bracket_seeds(tournament_id).await?.is_some() {
+        // A draw may already exist. Compare the freshly-computed seeds with the
+        // stored ones:
+        //   - identical → the bracket is still valid (e.g. re-clicking Générer);
+        //     leave its matches and results untouched, just advance.
+        //   - different → the stored draw came from stale standings (the classic
+        //     "drawn before the pools were scored" case). Every match it produced
+        //     is invalid, so drop them all — including any already scored, which
+        //     are themselves garbage — then redraw from the correct seeds.
+        if let Some((old_main, old_cons)) = self.bracket_seeds(tournament_id).await? {
+            if old_main == main_seeds && old_cons == consolation_seeds {
+                return self.advance_bracket(tournament_id).await;
+            }
             let finals: Vec<MatchView> = self
                 .match_projection()
                 .await?
@@ -780,12 +787,6 @@ impl App {
                 .into_iter()
                 .filter(|v| v.tournament == tournament_id && v.pool.is_none())
                 .collect();
-            if finals.iter().any(|v| v.winner.is_some() || v.court.is_some()) {
-                return Err(AppError::Command(
-                    "la phase finale est commencée — réinitialise le tournoi pour retirer le bracket"
-                        .into(),
-                ));
-            }
             for v in &finals {
                 self.delete_match(v.id).await?;
             }

@@ -330,3 +330,227 @@ async fn regenerate_bracket_reseeds_after_pool_scores() {
     assert!(!main_names.contains("P1_A") && !main_names.contains("P1_B"), "pool 1 losers not in main");
     assert!(cons_names.contains("P1_A"), "pool 1 loser is in the consolation draw");
 }
+
+/// Regression (TDD): the early garbage draw schedules finals matches that the
+/// dispatcher can auto-start (a court gets assigned) before any score exists.
+/// Re-clicking "Générer" must still re-seed in that state — a *started but
+/// unscored* finals match is itself garbage and safe to drop. Only a finals
+/// match with a recorded winner should block the re-seed.
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn regenerate_bracket_reseeds_even_if_garbage_final_started() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "ReseedStarted".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    let mut p1 = [TeamId::new(), TeamId::new(), TeamId::new()];
+    let mut p2 = [TeamId::new(), TeamId::new(), TeamId::new()];
+    p1.sort();
+    p2.sort();
+    let (p1_la, p1_lb, p1_win) = (p1[0], p1[1], p1[2]);
+    let (p2_la, p2_lb, p2_win) = (p2[0], p2[1], p2[2]);
+
+    for (id, name) in [
+        (p1_win, "P1_WIN"),
+        (p1_la, "P1_A"),
+        (p1_lb, "P1_B"),
+        (p2_win, "P2_WIN"),
+        (p2_la, "P2_A"),
+        (p2_lb, "P2_B"),
+    ] {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: id,
+                name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let (pool1, pool2) = (PoolId::new(), PoolId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![
+                Pool { id: pool1, name: "P1".into(), teams: vec![p1_la, p1_lb, p1_win] },
+                Pool { id: pool2, name: "P2".into(), teams: vec![p2_la, p2_lb, p2_win] },
+            ],
+        },
+    )
+    .await
+    .expect("pools");
+
+    // Two courts: one for the (garbage) final, one for pool matches.
+    let (c_pool, c_final) = (CourtId::new(), CourtId::new());
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![c_pool, c_final] })
+        .await
+        .expect("courts");
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pools");
+
+    // Early draw on empty standings → returns the scheduled garbage final(s).
+    let early = app.generate_bracket(t_id, 1).await.expect("early draw");
+    assert!(!early.is_empty(), "early draw schedules a final");
+    // Start AND SCORE the garbage final — mimics prod, where the bad draw's
+    // finals were auto-dispatched and even played before anyone noticed.
+    app.match_cmd(early[0], MatchCommand::Start { court_id: c_final })
+        .await
+        .expect("start garbage final");
+    app.match_cmd(early[0], MatchCommand::RecordSet { a: 21, b: 0 })
+        .await
+        .expect("score garbage final");
+
+    // Play the pools so the real winners emerge.
+    for (a, b, pool) in [
+        (p1_win, p1_la, pool1),
+        (p1_win, p1_lb, pool1),
+        (p2_win, p2_la, pool2),
+        (p2_win, p2_lb, pool2),
+    ] {
+        let m = MatchId::new();
+        app.match_cmd(
+            m,
+            MatchCommand::Schedule {
+                match_id: m,
+                tournament_id: t_id,
+                format: MatchFormat::BestOf1,
+                team_a: a,
+                team_b: b,
+                pool_id: Some(pool),
+            },
+        )
+        .await
+        .expect("schedule pool match");
+        app.match_cmd(m, MatchCommand::Start { court_id: c_pool })
+            .await
+            .expect("start");
+        app.match_cmd(m, MatchCommand::RecordSet { a: 21, b: 0 })
+            .await
+            .expect("record");
+    }
+
+    // Re-generate must succeed (started-but-unscored garbage final dropped).
+    app.generate_bracket(t_id, 1).await.expect("regenerate after started garbage final");
+
+    let view = app.bracket_view(t_id).await.expect("bracket view");
+    let main_names: std::collections::HashSet<String> = view
+        .iter()
+        .filter(|n| matches!(n.kind, BracketKind::Main))
+        .flat_map(|n| [n.team_a.clone(), n.team_b.clone()])
+        .flatten()
+        .collect();
+    assert!(main_names.contains("P1_WIN"), "pool 1 winner in main after re-seed");
+    assert!(main_names.contains("P2_WIN"), "pool 2 winner in main after re-seed");
+    assert!(!main_names.contains("P1_A"), "pool 1 loser not in main");
+}
+
+/// Safety: re-clicking "Générer" when the qualifiers are unchanged must NOT wipe
+/// a real, in-progress bracket — its recorded finals results have to survive.
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn regenerate_bracket_preserves_results_when_seeds_unchanged() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Preserve".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    let (a, b, c, d) = (TeamId::new(), TeamId::new(), TeamId::new(), TeamId::new());
+    for (id, name) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: id,
+                name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let (pool1, pool2) = (PoolId::new(), PoolId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![
+                Pool { id: pool1, name: "P1".into(), teams: vec![a, b] },
+                Pool { id: pool2, name: "P2".into(), teams: vec![c, d] },
+            ],
+        },
+    )
+    .await
+    .expect("pools");
+
+    let court = CourtId::new();
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![court] })
+        .await
+        .expect("courts");
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pools");
+
+    // Score the pools first: A wins P1, C wins P2.
+    for (x, y, pool) in [(a, b, pool1), (c, d, pool2)] {
+        let m = MatchId::new();
+        app.match_cmd(
+            m,
+            MatchCommand::Schedule {
+                match_id: m,
+                tournament_id: t_id,
+                format: MatchFormat::BestOf1,
+                team_a: x,
+                team_b: y,
+                pool_id: Some(pool),
+            },
+        )
+        .await
+        .expect("schedule pool");
+        app.match_cmd(m, MatchCommand::Start { court_id: court }).await.expect("start");
+        app.match_cmd(m, MatchCommand::RecordSet { a: 21, b: 0 }).await.expect("record");
+    }
+
+    // Correct draw → final A vs C; play it (A wins).
+    let created = app.generate_bracket(t_id, 1).await.expect("draw");
+    let final_id = *created.first().expect("a final was scheduled");
+    app.match_cmd(final_id, MatchCommand::Start { court_id: court }).await.expect("start final");
+    app.match_cmd(final_id, MatchCommand::RecordSet { a: 21, b: 0 }).await.expect("score final");
+
+    // Re-generate with the same per_pool → seeds identical → result preserved.
+    app.generate_bracket(t_id, 1).await.expect("regenerate same seeds");
+
+    let view = app.bracket_view(t_id).await.expect("view");
+    let final_winner = view
+        .iter()
+        .filter(|n| matches!(n.kind, BracketKind::Main))
+        .find_map(|n| n.winner.clone());
+    assert_eq!(final_winner.as_deref(), Some("A"), "real finals result survives a re-Générer");
+}
