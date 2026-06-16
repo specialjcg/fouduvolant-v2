@@ -1602,15 +1602,24 @@ viewLane s names idx cp =
                 |> Maybe.map (liveNode s names)
                 |> maybeList
 
+        -- Courts with nobody playing right now → a prévision can be launched there.
+        playingCourts =
+            s.board.matches |> List.filter (\m -> m.status == "Playing") |> List.filterMap .court
+
+        freeCourts =
+            s.view.courts
+                |> List.indexedMap (\i c -> ( i + 1, c ))
+                |> List.filter (\( _, c ) -> not (List.member c playingCourts))
+
         nextNode =
             cp.next
                 |> Maybe.andThen (\sg -> Maybe.map (\m -> ( m, sg )) (findMatch s.board.matches sg.matchId))
-                |> Maybe.map (\( m, sg ) -> suggestNode (cp.current == Nothing) names cp.court m sg)
+                |> Maybe.map (\( m, sg ) -> suggestNode freeCourts names cp.court m sg)
                 |> maybeList
 
         previewNodes =
             List.filterMap
-                (\sg -> Maybe.map (previewNode names) (findMatch s.board.matches sg.matchId))
+                (\sg -> Maybe.map (previewNode freeCourts cp.court names) (findMatch s.board.matches sg.matchId))
                 cp.previews
 
         ( badgeClass, badgeText ) =
@@ -1696,8 +1705,8 @@ liveNode s names m =
         ]
 
 
-suggestNode : Bool -> Dict String String -> String -> MatchV -> Sugg -> Html Msg
-suggestNode free names court m sg =
+suggestNode : List ( Int, String ) -> Dict String String -> String -> MatchV -> Sugg -> Html Msg
+suggestNode freeCourts names court m sg =
     div [ class "node suggest" ]
         [ nodeHead
             (if sg.needsRest then
@@ -1707,19 +1716,43 @@ suggestNode free names court m sg =
                 "Suivant"
             )
         , div [ class "node-teams" ] [ text (matchLabel names m) ]
-        , if free then
-            button [ onClick (StartMatch m.id court) ] [ text "▶ Démarrer" ]
-
-          else
-            span [ class "muted", Html.Attributes.style "font-size" ".78rem" ]
-                [ text "à la fin du match en cours" ]
+        , div [ class "row", Html.Attributes.style "gap" "4px", Html.Attributes.style "flex-wrap" "wrap" ]
+            (launchButtons court freeCourts m.id)
         ]
 
 
-previewNode : Dict String String -> MatchV -> Html Msg
-previewNode names m =
+{-| Launch buttons for a prévision: "▶ Démarrer" on this lane's own court when
+free, plus "▶ T{n}" for every other free court so a match can be sent elsewhere.
+-}
+launchButtons : String -> List ( Int, String ) -> String -> List (Html Msg)
+launchButtons court freeCourts matchId =
+    if List.isEmpty freeCourts then
+        [ span [ class "muted", Html.Attributes.style "font-size" ".78rem" ]
+            [ text "à la fin du match en cours" ]
+        ]
+
+    else
+        let
+            ( own, others ) =
+                List.partition (\( _, c ) -> c == court) freeCourts
+        in
+        List.map (\( _, c ) -> button [ onClick (StartMatch matchId c) ] [ text "▶ Démarrer" ]) own
+            ++ List.map
+                (\( n, c ) ->
+                    button [ class "secondary", onClick (StartMatch matchId c) ]
+                        [ text ("▶ T" ++ String.fromInt n) ]
+                )
+                others
+
+
+previewNode : List ( Int, String ) -> String -> Dict String String -> MatchV -> Html Msg
+previewNode freeCourts court names m =
     div [ class "node preview" ]
-        [ nodeHead "À venir", div [ class "node-teams" ] [ text (matchLabel names m) ] ]
+        [ nodeHead "À venir"
+        , div [ class "node-teams" ] [ text (matchLabel names m) ]
+        , div [ class "row", Html.Attributes.style "gap" "4px", Html.Attributes.style "flex-wrap" "wrap" ]
+            (launchButtons court freeCourts m.id)
+        ]
 
 
 scoreEntry : Sel -> String -> Html Msg
