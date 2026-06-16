@@ -88,6 +88,18 @@ impl MatchProjection {
                     self.next_done += 1;
                 }
             }
+            MatchEvent::Rescored { set, winner } => {
+                if let Some(v) = self.views.get_mut(&id) {
+                    v.points_a = u16::from(set.a());
+                    v.points_b = u16::from(set.b());
+                    v.status = SchedStatus::Done;
+                    v.winner = Some(*winner);
+                    if v.done_order.is_none() {
+                        v.done_order = Some(self.next_done);
+                        self.next_done += 1;
+                    }
+                }
+            }
         }
     }
 

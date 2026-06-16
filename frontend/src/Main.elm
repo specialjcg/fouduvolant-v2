@@ -53,6 +53,7 @@ type alias Sel =
     , perPool : String
     , step : Step
     , numPools : String
+    , editing : Maybe String
     }
 
 
@@ -196,6 +197,9 @@ type Msg
     | StartMatch String String
     | SetScore String Int String
     | SubmitScore String
+    | EditScore String Int Int
+    | CancelEdit
+    | Rescore String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
 
@@ -434,6 +438,39 @@ update msg model =
                             ( model, Cmd.none )
                 )
 
+        EditScore matchId pa pb ->
+            ( mapSel
+                (\s ->
+                    { s
+                        | editing = Just matchId
+                        , scores = Dict.insert matchId ( String.fromInt pa, String.fromInt pb ) s.scores
+                    }
+                )
+                model
+            , Cmd.none
+            )
+
+        CancelEdit ->
+            ( mapSel (\s -> { s | editing = Nothing }) model, Cmd.none )
+
+        Rescore matchId ->
+            withSel model
+                (\s ->
+                    case Dict.get matchId s.scores of
+                        Just ( a, b ) ->
+                            case ( String.toInt a, String.toInt b ) of
+                                ( Just na, Just nb ) ->
+                                    ( mapSel (\x -> { x | editing = Nothing }) model
+                                    , rescore model.api matchId na nb
+                                    )
+
+                                _ ->
+                                    ( model, Cmd.none )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+                )
+
         Mutated (Ok _) ->
             ( model, refresh model )
 
@@ -468,6 +505,7 @@ mergeView prev v =
             , perPool = "2"
             , step = StepTeams
             , numPools = "2"
+            , editing = Nothing
             }
 
 
@@ -564,7 +602,7 @@ createTournament api name =
                 (E.object
                     [ ( "name", E.string name )
                     , ( "pool_format", E.string "BestOf1" )
-                    , ( "bracket_format", E.string "BestOf3" )
+                    , ( "bracket_format", E.string "BestOf1" )
                     ]
                 )
         , expect = Http.expectJson Created (D.field "id" D.string)
@@ -705,6 +743,11 @@ startMatch api matchId courtId =
 recordSet : String -> String -> Int -> Int -> Cmd Msg
 recordSet api matchId a b =
     postEmpty api ("/matches/" ++ matchId ++ "/sets") (E.object [ ( "a", E.int a ), ( "b", E.int b ) ])
+
+
+rescore : String -> String -> Int -> Int -> Cmd Msg
+rescore api matchId a b =
+    postEmpty api ("/matches/" ++ matchId ++ "/rescore") (E.object [ ( "a", E.int a ), ( "b", E.int b ) ])
 
 
 dispatch : String -> String -> Cmd Msg
@@ -1303,7 +1346,7 @@ viewLane s names idx cp =
                 ( "badge idle", "Inactif" )
 
         nodes =
-            List.map (doneNode names) completed ++ currentNode ++ nextNode ++ previewNodes
+            List.map (doneNode s names) completed ++ currentNode ++ nextNode ++ previewNodes
     in
     div [ class "lane" ]
         [ div [ class "lane-head" ]
@@ -1335,10 +1378,35 @@ nodeHead label =
     div [ class "node-head" ] [ text label ]
 
 
-doneNode : Dict String String -> MatchV -> Html Msg
-doneNode names m =
+doneNode : Sel -> Dict String String -> MatchV -> Html Msg
+doneNode s names m =
+    let
+        ( a, b ) =
+            Maybe.withDefault ( String.fromInt m.pointsA, String.fromInt m.pointsB )
+                (Dict.get m.id s.scores)
+
+        footer =
+            if s.editing == Just m.id then
+                div [ class "row" ]
+                    [ input [ class "score", type_ "number", value a, onInput (SetScore m.id 0) ] []
+                    , text "-"
+                    , input [ class "score", type_ "number", value b, onInput (SetScore m.id 1) ] []
+                    , button [ onClick (Rescore m.id) ] [ text "OK" ]
+                    , button [ class "secondary", onClick CancelEdit ] [ text "✕" ]
+                    ]
+
+            else
+                div [ class "row" ]
+                    [ span [ Html.Attributes.style "font-weight" "600" ]
+                        [ text (String.fromInt m.pointsA ++ "-" ++ String.fromInt m.pointsB) ]
+                    , button [ class "secondary", onClick (EditScore m.id m.pointsA m.pointsB) ] [ text "✎" ]
+                    ]
+    in
     div [ class "node done" ]
-        [ nodeHead "Terminé", div [ class "node-teams" ] [ text (matchLabel names m) ] ]
+        [ nodeHead "Terminé"
+        , div [ class "node-teams" ] [ text (matchLabel names m) ]
+        , footer
+        ]
 
 
 liveNode : Sel -> Dict String String -> MatchV -> Html Msg

@@ -90,6 +90,14 @@ pub enum MatchCommand {
         /// Points for side B.
         b: u8,
     },
+    /// Correct the score of a started or completed match (single decisive set).
+    /// Replaces the recorded score and recomputes the winner.
+    Rescore {
+        /// Points for side A.
+        a: u8,
+        /// Points for side B.
+        b: u8,
+    },
 }
 
 /// Events emitted by the [`Match`] aggregate.
@@ -125,6 +133,13 @@ pub enum MatchEvent {
         /// Winning team.
         winner: TeamId,
     },
+    /// The score was corrected after the fact (replaces the set, sets the winner).
+    Rescored {
+        /// The corrected set.
+        set: SetScore,
+        /// Recomputed winner.
+        winner: TeamId,
+    },
 }
 
 impl DomainEvent for MatchEvent {
@@ -134,6 +149,7 @@ impl DomainEvent for MatchEvent {
             MatchEvent::MatchStarted { .. } => "MatchStarted",
             MatchEvent::SetRecorded { .. } => "SetRecorded",
             MatchEvent::Completed { .. } => "MatchCompleted",
+            MatchEvent::Rescored { .. } => "ScoreCorrected",
         }
         .to_string()
     }
@@ -245,6 +261,20 @@ impl Aggregate for Match {
                     sink.write(MatchEvent::Completed { winner }, self).await;
                 }
             }
+
+            MatchCommand::Rescore { a, b } => {
+                match self.status {
+                    MatchStatus::NotStarted => return Err(MatchError::NotScheduled),
+                    MatchStatus::Scheduled => return Err(MatchError::NotStarted),
+                    MatchStatus::InProgress | MatchStatus::Completed => {}
+                }
+                let set = SetScore::new(a, b)?;
+                let winner = match set.winner() {
+                    SetOutcome::SideA => self.team_a.expect("started match has team_a"),
+                    SetOutcome::SideB => self.team_b.expect("started match has team_b"),
+                };
+                sink.write(MatchEvent::Rescored { set, winner }, self).await;
+            }
         }
         Ok(())
     }
@@ -276,6 +306,11 @@ impl Aggregate for Match {
             MatchEvent::Completed { winner } => {
                 self.status = MatchStatus::Completed;
                 self.winner = Some(winner);
+            }
+            MatchEvent::Rescored { set, winner } => {
+                self.sets = vec![set];
+                self.winner = Some(winner);
+                self.status = MatchStatus::Completed;
             }
         }
     }

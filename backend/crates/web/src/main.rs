@@ -79,6 +79,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
         .route("/matches/{id}/start", post(start_match))
         .route("/matches/{id}/sets", post(record_set))
+        .route("/matches/{id}/rescore", post(rescore))
         // Serve the built frontend (index.html, elm.js) for any non-API path.
         .fallback_service(ServeDir::new(static_dir()))
         .layer(TraceLayer::new_for_http())
@@ -406,6 +407,16 @@ async fn record_set(
     Json(body): Json<RecordSetBody>,
 ) -> Result<Response, ApiError> {
     app.match_cmd(MatchId(id), MatchCommand::RecordSet { a: body.a, b: body.b })
+        .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn rescore(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RecordSetBody>,
+) -> Result<Response, ApiError> {
+    app.match_cmd(MatchId(id), MatchCommand::Rescore { a: body.a, b: body.b })
         .await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
