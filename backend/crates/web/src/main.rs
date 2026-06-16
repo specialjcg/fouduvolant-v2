@@ -416,8 +416,7 @@ async fn rescore(
     Path(id): Path<Uuid>,
     Json(body): Json<RecordSetBody>,
 ) -> Result<Response, ApiError> {
-    app.match_cmd(MatchId(id), MatchCommand::Rescore { a: body.a, b: body.b })
-        .await?;
+    app.rescore_match(MatchId(id), body.a, body.b).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

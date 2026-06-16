@@ -348,7 +348,21 @@ update msg model =
             withSel model (\s -> ( model, deleteTeam model.api s.id teamId ))
 
         GoStep st ->
-            ( mapSel (\s -> { s | step = st }) model, Cmd.none )
+            ( mapSel
+                (\s ->
+                    { s
+                        | step = st
+                        , numPools =
+                            if st == StepPools && List.isEmpty s.view.pools then
+                                String.fromInt (suggestPools (List.length s.view.teams))
+
+                            else
+                                s.numPools
+                    }
+                )
+                model
+            , Cmd.none
+            )
 
         SetNumPools v ->
             ( mapSel (\s -> { s | numPools = v }) model, Cmd.none )
@@ -368,7 +382,15 @@ update msg model =
                 )
 
         StartPools ->
-            withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-pools") (E.object []) ))
+            withSel model
+                (\s ->
+                    ( model
+                    , Cmd.batch
+                        (List.map (\p -> genPoolMatches model.api s.id p.id) s.view.pools
+                            ++ [ postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-pools") (E.object []) ]
+                        )
+                    )
+                )
 
         StartFinals ->
             withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/start-bracket") (E.object []) ))
@@ -504,7 +526,7 @@ mergeView prev v =
             , bracket = []
             , perPool = "2"
             , step = StepTeams
-            , numPools = "2"
+            , numPools = String.fromInt (suggestPools (List.length v.teams))
             , editing = Nothing
             }
 
@@ -666,6 +688,12 @@ deleteTeam api tid teamId =
         , timeout = Nothing
         , tracker = Nothing
         }
+
+
+{-| Suggested pool count: aim for pools of about 6 teams. -}
+suggestPools : Int -> Int
+suggestPools teams =
+    Basics.max 1 ((teams + 5) // 6)
 
 
 {-| Distribute teams round-robin into `n` balanced pools (sizes differ by ≤1). -}
@@ -1208,10 +1236,7 @@ poolRow names courts matches assigned p =
     div [ class "match" ]
         [ div [ class "row", Html.Attributes.style "justify-content" "space-between" ]
             [ span [ Html.Attributes.style "font-weight" "600" ] [ text p.name ]
-            , div [ class "row" ]
-                [ courtSelect courts assigned p.id
-                , button [ onClick (GenPoolMatches p.id) ] [ text "Générer matchs" ]
-                ]
+            , courtSelect courts assigned p.id
             ]
         , poolMatrix names matches p
         ]

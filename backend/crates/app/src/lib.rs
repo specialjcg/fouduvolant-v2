@@ -703,6 +703,86 @@ impl App {
         Ok(created)
     }
 
+    /// Correct a match's score, then — if it is a bracket match whose winner
+    /// changed — reconcile the downstream bracket (delete now-invalid matches of
+    /// later rounds and re-create the correct ones).
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a command or database failure.
+    pub async fn rescore_match(
+        &self,
+        match_id: MatchId,
+        a: u8,
+        b: u8,
+    ) -> Result<(), AppError> {
+        self.match_cmd(match_id, MatchCommand::Rescore { a, b })
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+
+        // Bracket match? Reconcile downstream rounds.
+        if let Some(view) = self.match_projection().await?.get(match_id) {
+            if view.pool.is_none() {
+                self.reconcile_bracket(view.tournament).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Drop bracket matches whose pairing is no longer part of the recomputed
+    /// tree (e.g. after a re-score flipped an earlier-round winner), then
+    /// re-advance to schedule the correct matches.
+    async fn reconcile_bracket(&self, tournament_id: TournamentId) -> Result<(), AppError> {
+        let Some((main_seeds, consolation_seeds)) = self.bracket_seeds(tournament_id).await?
+        else {
+            return Ok(());
+        };
+        let unordered = |x: TeamId, y: TeamId| if x <= y { (x, y) } else { (y, x) };
+
+        let bracket_matches: Vec<MatchView> = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .filter(|v| v.tournament == tournament_id && v.pool.is_none())
+            .collect();
+        let results: Vec<(TeamId, TeamId, TeamId)> = bracket_matches
+            .iter()
+            .filter_map(|v| v.winner.map(|w| (v.team_a, v.team_b, w)))
+            .collect();
+
+        // Legitimate matchups in the current tree (both teams known).
+        let valid: std::collections::HashSet<(TeamId, TeamId)> =
+            build_bracket(&main_seeds, &consolation_seeds, &results)
+                .into_iter()
+                .filter_map(|n| match (n.team_a, n.team_b) {
+                    (Some(x), Some(y)) => Some(unordered(x, y)),
+                    _ => None,
+                })
+                .collect();
+
+        for v in &bracket_matches {
+            if !valid.contains(&unordered(v.team_a, v.team_b)) {
+                self.delete_match(v.id).await?;
+            }
+        }
+        self.advance_bracket(tournament_id).await?;
+        Ok(())
+    }
+
+    /// Hard-delete a single match's event stream.
+    async fn delete_match(&self, match_id: MatchId) -> Result<(), AppError> {
+        let id = match_id.to_string();
+        sqlx::query("DELETE FROM events WHERE aggregate_type = 'Match' AND aggregate_id = $1")
+            .bind(&id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id = $1")
+            .bind(&id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// The bracket tree (main + consolation) with team names resolved.
     ///
     /// # Errors
