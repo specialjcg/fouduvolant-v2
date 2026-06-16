@@ -1310,53 +1310,136 @@ viewBracket s =
 
           else
             div []
-                [ bracketColumn "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
-                , bracketColumn "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
+                [ bracketTree "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
+                , bracketTree "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
                 ]
         ]
 
 
-bracketColumn : String -> List BracketNode -> Html Msg
-bracketColumn title nodes =
+thirdPlaceRound : Int
+thirdPlaceRound =
+    255
+
+
+{-| One bracket (main or consolation) drawn as a column-per-round tree. -}
+bracketTree : String -> List BracketNode -> Html Msg
+bracketTree title nodes =
     if List.isEmpty nodes then
         text ""
 
     else
+        let
+            maxRound =
+                nodes
+                    |> List.filter (\n -> n.round /= 0 && n.round /= thirdPlaceRound)
+                    |> List.map .round
+                    |> List.maximum
+                    |> Maybe.withDefault 1
+
+            hasBarrages =
+                List.any (\n -> n.round == 0) nodes
+
+            roundNums =
+                (if hasBarrages then
+                    [ 0 ]
+
+                 else
+                    []
+                )
+                    ++ List.range 1 maxRound
+
+            thirdNodes =
+                List.filter (\n -> n.round == thirdPlaceRound) nodes
+
+            columns =
+                List.map
+                    (\r -> roundColumn maxRound r (List.filter (\n -> n.round == r) nodes))
+                    roundNums
+                    ++ (if List.isEmpty thirdNodes then
+                            []
+
+                        else
+                            [ thirdColumn thirdNodes ]
+                       )
+        in
         div []
-            (h3 [ class "muted" ] [ text title ]
-                :: List.map bracketNodeRow (List.sortBy (\n -> ( n.round, n.index )) nodes)
-            )
+            [ h3 [] [ text title ]
+            , div [ class "bracket" ] columns
+            ]
 
 
-bracketNodeRow : BracketNode -> Html Msg
-bracketNodeRow n =
-    let
-        side m =
-            Maybe.withDefault "—" m
-
-        result =
-            case n.winner of
-                Just w ->
-                    " → " ++ w
-
-                Nothing ->
-                    ""
-    in
-    let
-        label =
-            if n.round == 0 then
-                "Prélim "
-
-            else if n.round == 255 then
-                "3e place "
-
-            else
-                "T" ++ String.fromInt n.round ++ " "
-    in
-    div [ class "match" ]
-        [ span [ class "muted" ] [ text label ]
-        , text (side n.teamA ++ " vs " ++ side n.teamB ++ result)
+roundColumn : Int -> Int -> List BracketNode -> Html Msg
+roundColumn maxRound r nodes =
+    div [ class "round" ]
+        [ div [ class "round-title" ] [ text (roundLabel maxRound r) ]
+        , div [ class "round-body" ]
+            (List.map matchBox (List.sortBy .index nodes))
         ]
+
+
+thirdColumn : List BracketNode -> Html Msg
+thirdColumn nodes =
+    div [ class "round" ]
+        [ div [ class "round-title" ] [ text "3e place" ]
+        , div [ class "round-body" ] (List.map matchBox nodes)
+        ]
+
+
+roundLabel : Int -> Int -> String
+roundLabel maxRound r =
+    if r == 0 then
+        "Barrages"
+
+    else
+        case 2 ^ (maxRound - r + 1) of
+            2 ->
+                "Finale"
+
+            4 ->
+                "Demi-finales"
+
+            8 ->
+                "Quarts"
+
+            16 ->
+                "8es de finale"
+
+            32 ->
+                "16es de finale"
+
+            n ->
+                "Tour de " ++ String.fromInt n
+
+
+matchBox : BracketNode -> Html Msg
+matchBox n =
+    div [ class "bmatch" ]
+        [ seedRow n.teamA n.winner
+        , seedRow n.teamB n.winner
+        ]
+
+
+seedRow : Maybe String -> Maybe String -> Html Msg
+seedRow team winner =
+    let
+        isWin =
+            case ( team, winner ) of
+                ( Just t, Just w ) ->
+                    t == w
+
+                _ ->
+                    False
+    in
+    div
+        [ class
+            (if isWin then
+                "seed win"
+
+             else
+                "seed"
+            )
+        ]
+        [ span [ class "nm" ] [ text (Maybe.withDefault "—" team) ] ]
 
 
 viewStandings : Sel -> Html Msg
