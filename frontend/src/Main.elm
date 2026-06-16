@@ -1279,7 +1279,7 @@ viewPools s =
                     text ""
                 , div []
                     (List.map
-                        (\pp -> poolRow (s.view.phase == "Draft") names s.view.courts s.board.matches (assignedOf pp.id) pp)
+                        (\pp -> poolRow (s.view.phase == "Draft") names s.view.courts s.board.matches (assignedOf pp.id) (rankedPoolTeams names s.standings pp) pp)
                         s.view.pools
                     )
                 ]
@@ -1486,8 +1486,8 @@ standingsRow r =
         ]
 
 
-poolRow : Bool -> Dict String String -> List String -> List MatchV -> Maybe String -> PoolV -> Html Msg
-poolRow editable names courts matches assigned p =
+poolRow : Bool -> Dict String String -> List String -> List MatchV -> Maybe String -> List String -> PoolV -> Html Msg
+poolRow editable names courts matches assigned ranked p =
     let
         dropZone =
             if editable then
@@ -1508,7 +1508,7 @@ poolRow editable names courts matches assigned p =
                 (List.map (teamChip names) p.teams)
 
           else
-            poolMatrix names matches p
+            poolMatrix names matches ranked
         ]
 
 
@@ -1523,20 +1523,42 @@ teamChip names tid =
 
 
 {-| Cross table of a pool's matches (équipe × équipe), score in each cell. -}
-poolMatrix : Dict String String -> List MatchV -> PoolV -> Html Msg
-poolMatrix names matches p =
-    if List.length p.teams < 2 then
+poolMatrix : Dict String String -> List MatchV -> List String -> Html Msg
+poolMatrix names matches teams =
+    if List.length teams < 2 then
         text ""
 
     else
         table [ Html.Attributes.style "margin-top" ".5rem" ]
             (tr []
                 (th [] [ text "" ]
-                    :: List.map (\t -> th [] [ text (shortName (nameOf names t)) ]) p.teams
+                    :: List.map (\t -> th [] [ text (shortName (nameOf names t)) ]) teams
                     ++ [ th [] [ text "V" ], th [] [ text "D" ], th [] [ text "Pts" ], th [] [ text "Diff" ] ]
                 )
-                :: List.map (matrixRow names matches p.teams) p.teams
+                :: List.map (matrixRow names matches teams) teams
             )
+
+
+{-| Pool team ids ordered by the server-computed standings (BWF tiebreakers);
+falls back to pool order for teams missing from the standings. -}
+rankedPoolTeams : Dict String String -> List PoolStandings -> PoolV -> List String
+rankedPoolTeams names standings p =
+    case List.head (List.filter (\ps -> ps.poolId == p.id) standings) of
+        Just ps ->
+            let
+                idFor nm =
+                    List.head (List.filter (\tid -> nameOf names tid == nm) p.teams)
+
+                ordered =
+                    List.filterMap (\row -> idFor row.name) ps.rows
+
+                rest =
+                    List.filter (\tid -> not (List.member tid ordered)) p.teams
+            in
+            ordered ++ rest
+
+        Nothing ->
+            p.teams
 
 
 matrixRow : Dict String String -> List MatchV -> List String -> String -> Html Msg
