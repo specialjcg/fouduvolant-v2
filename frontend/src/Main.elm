@@ -1373,12 +1373,17 @@ bracketTree title nodes =
             ]
 
 
+bcell : Html Msg -> Html Msg
+bcell inner =
+    div [ class "cell" ] [ inner ]
+
+
 roundColumn : Int -> Int -> List BracketNode -> Html Msg
 roundColumn maxRound r nodes =
     div [ class "round" ]
         [ div [ class "round-title" ] [ text (roundLabel maxRound r) ]
         , div [ class "round-body" ]
-            (List.map matchBox (List.sortBy .index nodes))
+            (List.map (\n -> bcell (matchBox n)) (List.sortBy .index nodes))
         ]
 
 
@@ -1386,7 +1391,7 @@ thirdColumn : List BracketNode -> Html Msg
 thirdColumn nodes =
     div [ class "round" ]
         [ div [ class "round-title" ] [ text "3e place" ]
-        , div [ class "round-body" ] (List.map matchBox nodes)
+        , div [ class "round-body" ] (List.map (\n -> bcell (matchBox n)) nodes)
         ]
 
 
@@ -1403,11 +1408,10 @@ barrageColumn round1 barrages =
                 (\m ->
                     case List.filter (\b -> b.feeds == Just m.index) barrages of
                         [] ->
-                            div [ class "bmatch ghost" ]
-                                [ seedRow Nothing Nothing, seedRow Nothing Nothing ]
+                            bcell (text "")
 
                         fed ->
-                            div [ class "barrage-group" ] (List.map matchBox fed)
+                            bcell (div [ class "barrage-group" ] (List.map matchBox fed))
                 )
                 round1
             )
