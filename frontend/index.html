@@ -206,11 +206,7 @@
       font-family:"Oswald", sans-serif; font-size:.68rem; letter-spacing:.18em;
       text-transform:uppercase; color:#8a8a96; text-align:center; margin-bottom:.5rem;
     }
-    .finals .round-body { display:flex; flex-direction:column; flex:1; }
-    /* Each row is an equal flex cell centering its box: aligns every column
-       proportionally (barrages ↔ tour 1, and the binary rounds between them)
-       regardless of how many barrages feed a given match. */
-    .finals .cell { flex:1 1 0; min-height:0; display:flex; flex-direction:column; justify-content:center; padding:.3rem 0; }
+    .finals .round-body { display:flex; flex-direction:column; justify-content:space-around; flex:1; gap:.55rem; }
     .finals .bmatch {
       position:relative; background:linear-gradient(180deg,#26262e,#1a1a20);
       border:1px solid #34343c; border-radius:var(--r-md); overflow:hidden;
