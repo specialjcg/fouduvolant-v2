@@ -768,6 +768,30 @@ impl App {
             ));
         }
 
+        // Re-seed when a draw already exists but the finals haven't started:
+        // pool results entered *after* an early "Générer" must be able to fix a
+        // seeding that was frozen on empty (all-zero) standings. Refuse once a
+        // finals match has been played or placed on a court, so no result is lost.
+        if self.bracket_seeds(tournament_id).await?.is_some() {
+            let finals: Vec<MatchView> = self
+                .match_projection()
+                .await?
+                .views()
+                .into_iter()
+                .filter(|v| v.tournament == tournament_id && v.pool.is_none())
+                .collect();
+            if finals.iter().any(|v| v.winner.is_some() || v.court.is_some()) {
+                return Err(AppError::Command(
+                    "la phase finale est commencée — réinitialise le tournoi pour retirer le bracket"
+                        .into(),
+                ));
+            }
+            for v in &finals {
+                self.delete_match(v.id).await?;
+            }
+            self.delete_bracket(tournament_id).await?;
+        }
+
         match self
             .bracket(
                 tournament_id,
@@ -779,7 +803,7 @@ impl App {
             .await
         {
             Ok(()) => {}
-            // Already drawn → fall through and just advance.
+            // Already drawn (race) → fall through and just advance.
             Err(AggregateError::UserError(BracketError::AlreadyDrawn)) => {}
             Err(e) => return Err(AppError::Command(e.to_string())),
         }
@@ -928,6 +952,21 @@ impl App {
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id = $1")
+            .bind(&id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Hard-delete a tournament's bracket draw so it can be re-seeded. The
+    /// Bracket aggregate is keyed by the tournament id.
+    async fn delete_bracket(&self, tournament_id: TournamentId) -> Result<(), AppError> {
+        let id = tournament_id.to_string();
+        sqlx::query("DELETE FROM events WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
+            .bind(&id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
             .bind(&id)
             .execute(&self.pool)
             .await?;
