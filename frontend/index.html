@@ -223,6 +223,10 @@
       content:""; position:absolute; right:-1.1rem; top:50%;
       width:1.1rem; height:1px; background:#34343c;
     }
+    /* colonne barrages : alignée 1 ligne par match du tour 1 */
+    .finals .barrage-group { display:flex; flex-direction:column; gap:.4rem; }
+    .finals .bmatch.ghost { visibility:hidden; }
+    .finals .bmatch.ghost::after { display:none; }
   </style>
 </head>
 <body>

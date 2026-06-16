@@ -173,6 +173,8 @@ pub struct BracketNodeView {
     pub team_b: Option<String>,
     /// Winner name once decided.
     pub winner: Option<String>,
+    /// For a preliminary (round 0) node: the round-1 match index it feeds.
+    pub feeds: Option<u16>,
 }
 
 /// Idempotent event-store schema, applied by [`App::run_migrations`].
@@ -1011,6 +1013,7 @@ impl App {
                 team_a: name(n.team_a),
                 team_b: name(n.team_b),
                 winner: name(n.winner),
+                feeds: n.feeds,
             })
             .collect())
     }

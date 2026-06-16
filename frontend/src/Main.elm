@@ -84,6 +84,7 @@ type alias BracketNode =
     , teamA : Maybe String
     , teamB : Maybe String
     , winner : Maybe String
+    , feeds : Maybe Int
     }
 
 
@@ -988,13 +989,14 @@ suggDec =
 
 bracketNodeDec : D.Decoder BracketNode
 bracketNodeDec =
-    D.map6 BracketNode
+    D.map7 BracketNode
         (D.field "kind" D.string)
         (D.field "round" D.int)
         (D.field "index" D.int)
         (D.field "team_a" (D.nullable D.string))
         (D.field "team_b" (D.nullable D.string))
         (D.field "winner" (D.nullable D.string))
+        (D.field "feeds" (D.nullable D.int))
 
 
 forecastCourtDec : D.Decoder ForecastCourt
@@ -1336,25 +1338,28 @@ bracketTree title nodes =
                     |> List.maximum
                     |> Maybe.withDefault 1
 
-            hasBarrages =
-                List.any (\n -> n.round == 0) nodes
+            barrages =
+                List.filter (\n -> n.round == 0) nodes
 
-            roundNums =
-                (if hasBarrages then
-                    [ 0 ]
-
-                 else
-                    []
-                )
-                    ++ List.range 1 maxRound
+            round1 =
+                List.filter (\n -> n.round == 1) nodes |> List.sortBy .index
 
             thirdNodes =
                 List.filter (\n -> n.round == thirdPlaceRound) nodes
 
-            columns =
+            mainColumns =
                 List.map
                     (\r -> roundColumn maxRound r (List.filter (\n -> n.round == r) nodes))
-                    roundNums
+                    (List.range 1 maxRound)
+
+            columns =
+                (if List.isEmpty barrages then
+                    []
+
+                 else
+                    [ barrageColumn round1 barrages ]
+                )
+                    ++ mainColumns
                     ++ (if List.isEmpty thirdNodes then
                             []
 
@@ -1382,6 +1387,30 @@ thirdColumn nodes =
     div [ class "round" ]
         [ div [ class "round-title" ] [ text "3e place" ]
         , div [ class "round-body" ] (List.map matchBox nodes)
+        ]
+
+
+{-| Preliminary (barrage / pré-tour) column, one row per round-1 match so each
+barrage sits facing the match its winner feeds. A match fed by two barrages
+shows both stacked; one with no barrage gets an invisible ghost to keep rows
+aligned with the round-1 column. -}
+barrageColumn : List BracketNode -> List BracketNode -> Html Msg
+barrageColumn round1 barrages =
+    div [ class "round" ]
+        [ div [ class "round-title" ] [ text "Barrages" ]
+        , div [ class "round-body" ]
+            (List.map
+                (\m ->
+                    case List.filter (\b -> b.feeds == Just m.index) barrages of
+                        [] ->
+                            div [ class "bmatch ghost" ]
+                                [ seedRow Nothing Nothing, seedRow Nothing Nothing ]
+
+                        fed ->
+                            div [ class "barrage-group" ] (List.map matchBox fed)
+                )
+                round1
+            )
         ]
 
 

@@ -41,6 +41,9 @@ pub struct BracketNode {
     pub team_b: Option<TeamId>,
     /// Winner once decided (by a result, or auto for a bye).
     pub winner: Option<TeamId>,
+    /// For a preliminary (round 0) node only: the round-1 match index its winner
+    /// advances into, so the UI can draw it facing that match. `None` otherwise.
+    pub feeds: Option<u16>,
 }
 
 impl BracketNode {
@@ -175,6 +178,7 @@ fn build_rounds(
                 team_a: a,
                 team_b: b,
                 winner: w,
+                feeds: None,
             });
             winners.push(w);
         }
@@ -207,10 +211,18 @@ fn build_tree(
     let mut nodes = Vec::new();
     // Direct entrants keep their seed order; preliminary winners fill the rest.
     let mut effective: Vec<Option<TeamId>> = seeds[..direct].iter().copied().map(Some).collect();
+    // slots[p] = 1-based seed number placed at bracket slot p; a barrage winner
+    // takes effective index `direct + i` (seed number `direct + i + 1`), so the
+    // round-1 match it feeds is the slot holding that seed, halved.
+    let slots = seed_slots(size);
     for i in 0..extra {
         let a = seeds[direct + i];
         let b = seeds[n - 1 - i];
         let winner = lk.get(&pair_key(a, b)).copied();
+        let feeds = slots
+            .iter()
+            .position(|&s| s == direct + i + 1)
+            .map(|p| (p / 2) as u16);
         nodes.push(BracketNode {
             kind,
             round: 0,
@@ -218,6 +230,7 @@ fn build_tree(
             team_a: Some(a),
             team_b: Some(b),
             winner,
+            feeds,
         });
         effective.push(winner);
     }
@@ -252,6 +265,7 @@ fn build_tree(
                 team_a: la,
                 team_b: lb,
                 winner: decide(la, lb, lk),
+                feeds: None,
             });
         }
     }
@@ -395,6 +409,36 @@ mod tests {
 
     fn team(n: u128) -> TeamId {
         TeamId(uuid::Uuid::from_u128(n))
+    }
+
+    #[test]
+    fn preliminary_feeds_point_to_the_match_holding_their_winner() {
+        // 6 seeds → size 4, extra 2, direct 2: two barrages, their winners fill
+        // the remaining round-1 slots. Each barrage's `feeds` must name the
+        // round-1 match its winner actually plays in.
+        let t: Vec<TeamId> = (1..=6).map(team).collect();
+        // Decide each barrage: seeds[2]>seeds[5], seeds[3]>seeds[4].
+        let results: Vec<Result3> = vec![(t[2], t[5], t[2]), (t[3], t[4], t[3])];
+        let nodes = build_bracket(&t, &[], &results);
+
+        let prelims: Vec<&BracketNode> = nodes
+            .iter()
+            .filter(|n| n.kind == BracketKind::Main && n.round == 0)
+            .collect();
+        assert_eq!(prelims.len(), 2, "two preliminary matches");
+
+        for p in prelims {
+            let feeds = p.feeds.expect("a preliminary node carries a feeds index");
+            let target = nodes
+                .iter()
+                .find(|n| n.kind == BracketKind::Main && n.round == 1 && n.index == feeds)
+                .expect("feeds points at an existing round-1 match");
+            let w = p.winner.expect("barrage decided");
+            assert!(
+                target.team_a == Some(w) || target.team_b == Some(w),
+                "barrage winner must appear in the round-1 match it feeds"
+            );
+        }
     }
 
     #[test]
