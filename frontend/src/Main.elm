@@ -32,6 +32,7 @@ type alias Model =
     , sel : Maybe Sel
     , newName : String
     , err : Maybe String
+    , wantStep : Step
     }
 
 
@@ -136,21 +137,51 @@ type alias MatchV =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
+    let
+        parts =
+            String.split "/" flags.open
+
+        tid =
+            List.head parts |> Maybe.withDefault ""
+
+        want =
+            parts |> List.drop 1 |> List.head |> Maybe.map stepFromString |> Maybe.withDefault StepTeams
+    in
     ( { api = flags.apiBase
       , tournaments = []
       , sel = Nothing
       , newName = ""
       , err = Nothing
+      , wantStep = want
       }
     , Cmd.batch
         [ loadTournaments flags.apiBase
-        , if flags.open == "" then
+        , if tid == "" then
             Cmd.none
 
           else
-            openCmds flags.apiBase flags.open
+            openCmds flags.apiBase tid
         ]
     )
+
+
+stepFromString : String -> Step
+stepFromString s =
+    case s of
+        "poules" ->
+            StepPools
+
+        "terrains" ->
+            StepBoard
+
+        "finales" ->
+            StepFinals
+
+        "classement" ->
+            StepRanking
+
+        _ ->
+            StepTeams
 
 
 
@@ -242,7 +273,7 @@ update msg model =
             ( { model | sel = Nothing }, loadTournaments model.api )
 
         GotView (Ok v) ->
-            ( { model | sel = Just (mergeView model.sel v), err = Nothing }, Cmd.none )
+            ( { model | sel = Just (mergeView model.wantStep model.sel v), err = Nothing }, Cmd.none )
 
         GotView (Err e) ->
             ( { model | err = Just (httpErr e) }, Cmd.none )
@@ -504,8 +535,8 @@ update msg model =
 
 
 {-| Keep transient input fields when a fresh TView arrives. -}
-mergeView : Maybe Sel -> TView -> Sel
-mergeView prev v =
+mergeView : Step -> Maybe Sel -> TView -> Sel
+mergeView wantStep prev v =
     case prev of
         Just s ->
             { s | view = v }
@@ -525,7 +556,7 @@ mergeView prev v =
             , standings = []
             , bracket = []
             , perPool = "2"
-            , step = StepTeams
+            , step = wantStep
             , numPools = String.fromInt (suggestPools (List.length v.teams))
             , editing = Nothing
             }
@@ -1481,27 +1512,55 @@ scoreEntry s matchId =
 viewPending : Sel -> Dict String String -> Html Msg
 viewPending s names =
     let
-        pending =
-            List.filter (\m -> m.status == "Pending") s.board.matches
+        -- Matches already placed in a lane (current / next / preview).
+        laneIds =
+            s.board.courts
+                |> List.concatMap
+                    (\cp ->
+                        maybeList cp.current
+                            ++ maybeList (Maybe.map .matchId cp.next)
+                            ++ List.map .matchId cp.previews
+                    )
+
+        queue =
+            s.board.matches
+                |> List.filter (\m -> m.status == "Pending" && not (List.member m.id laneIds))
+
+        -- Courts with nobody playing right now (free → can host a queued match).
+        playingCourts =
+            s.board.matches |> List.filter (\m -> m.status == "Playing") |> List.filterMap .court
+
+        freeCourts =
+            s.view.courts
+                |> List.indexedMap (\i c -> ( i + 1, c ))
+                |> List.filter (\( _, c ) -> not (List.member c playingCourts))
     in
-    if List.isEmpty pending then
+    if List.isEmpty queue then
         text ""
 
     else
         div []
-            [ h3 [ class "muted" ] [ text "En attente" ]
-            , table []
-                (tr [] [ th [] [ text "Match" ], th [] [ text "" ] ]
-                    :: List.map (pendingRow s names) pending
-                )
+            [ h3 [ class "muted" ] [ text "En attente — proposer un terrain" ]
+            , div [] (List.map (pendingRow names freeCourts) queue)
             ]
 
 
-pendingRow : Sel -> Dict String String -> MatchV -> Html Msg
-pendingRow s names m =
-    tr []
-        [ td [] [ text (matchLabel names m) ]
-        , td [] [ span [ class "pill" ] [ text "Pending" ] ]
+pendingRow : Dict String String -> List ( Int, String ) -> MatchV -> Html Msg
+pendingRow names freeCourts m =
+    div [ class "match row", Html.Attributes.style "justify-content" "space-between" ]
+        [ span [] [ text (matchLabel names m) ]
+        , div [ class "row" ]
+            (if List.isEmpty freeCourts then
+                [ span [ class "muted", Html.Attributes.style "font-size" ".8rem" ] [ text "terrains occupés" ] ]
+
+             else
+                List.map
+                    (\( n, c ) ->
+                        button [ class "secondary", onClick (StartMatch m.id c) ]
+                            [ text ("▶ T" ++ String.fromInt n) ]
+                    )
+                    freeCourts
+            )
         ]
 
 
