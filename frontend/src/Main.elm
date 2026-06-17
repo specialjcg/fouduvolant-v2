@@ -267,6 +267,7 @@ type Msg
     | EditScore String Int Int
     | CancelEdit
     | Rescore String
+    | ResetMatch String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
     | ToggleShowPast
@@ -612,6 +613,9 @@ update msg model =
                             ( model, Cmd.none )
                 )
 
+        ResetMatch matchId ->
+            ( model, resetMatch model.api matchId )
+
         Mutated (Ok _) ->
             ( model, refresh model )
 
@@ -912,6 +916,15 @@ recordSet api matchId a b =
 rescore : String -> String -> Int -> Int -> Cmd Msg
 rescore api matchId a b =
     postEmpty api ("/matches/" ++ matchId ++ "/rescore") (E.object [ ( "a", E.int a ), ( "b", E.int b ) ])
+
+
+resetMatch : String -> String -> Cmd Msg
+resetMatch api matchId =
+    Http.post
+        { url = api ++ "/matches/" ++ matchId ++ "/reset"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever Mutated
+        }
 
 
 dispatch : String -> String -> Cmd Msg
@@ -2074,10 +2087,16 @@ doneNode s names m =
 
             else
                 div [ class "row" ]
-                    [ span [ Html.Attributes.style "font-weight" "600" ]
+                    (span [ Html.Attributes.style "font-weight" "600" ]
                         [ text (setsLabel m) ]
-                    , button [ class "secondary", onClick (EditScore m.id m.pointsA m.pointsB) ] [ text "✎" ]
-                    ]
+                        :: button [ class "secondary", onClick (EditScore m.id m.pointsA m.pointsB) ] [ text "✎" ]
+                        :: (if m.pool == Nothing then
+                                [ button [ class "secondary", onClick (ResetMatch m.id), Html.Attributes.title "Réinitialiser ce match" ] [ text "↺" ] ]
+
+                            else
+                                []
+                           )
+                    )
     in
     div [ class "node done" ]
         [ nodeHead "Terminé"

@@ -779,3 +779,124 @@ async fn recording_a_bracket_result_auto_advances() {
     assert!(final_node.winner.is_some(), "final was played thanks to auto-advance");
     assert!(rounds >= 2, "took at least a semis round then a final round");
 }
+
+/// Resetting a bracket match drops its result so it can be replayed: the match
+/// is re-created fresh (teams still known) and any downstream match that used
+/// its result is reconciled away.
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn reset_bracket_match_clears_result_for_replay() {
+    use domain::bracket::BracketCommand;
+
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Reset".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    let teams = [TeamId::new(), TeamId::new(), TeamId::new(), TeamId::new()];
+    for (i, id) in teams.iter().enumerate() {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: *id,
+                name: format!("T{i}"),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+    let court = CourtId::new();
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![court] })
+        .await
+        .expect("courts");
+
+    // Draw a 4-team main bracket (two semis + final) and schedule the semis.
+    app.bracket(
+        t_id,
+        BracketCommand::Draw { main_seeds: teams.to_vec(), consolation_seeds: vec![] },
+    )
+    .await
+    .expect("draw");
+    app.advance_bracket(t_id).await.expect("advance");
+
+    // Play one semi.
+    let semi = {
+        let board = app.board(t_id).await.expect("board");
+        board
+            .matches
+            .iter()
+            .find(|m| m.pool.is_none() && m.status == SchedStatus::Pending)
+            .map(|m| m.id)
+            .expect("a semi is scheduled")
+    };
+    app.match_cmd(semi, MatchCommand::Start { court_id: court }).await.expect("start");
+    app.record_set(semi, 21, 0).await.expect("record");
+
+    let won = app
+        .bracket_view(t_id)
+        .await
+        .expect("view")
+        .iter()
+        .filter(|n| matches!(n.kind, BracketKind::Main) && n.round == 1 && n.winner.is_some())
+        .count();
+    assert_eq!(won, 1, "one semi decided after playing it");
+
+    // Reset the played semi.
+    let done_id = {
+        let board = app.board(t_id).await.expect("board");
+        board
+            .matches
+            .iter()
+            .find(|m| m.pool.is_none() && m.status == SchedStatus::Done)
+            .map(|m| m.id)
+            .expect("the played semi is done")
+    };
+    app.reset_bracket_match(done_id).await.expect("reset");
+
+    // No semi is decided anymore, and both semis are pending again.
+    let view = app.bracket_view(t_id).await.expect("view");
+    let still_won = view
+        .iter()
+        .filter(|n| matches!(n.kind, BracketKind::Main) && n.round == 1 && n.winner.is_some())
+        .count();
+    assert_eq!(still_won, 0, "reset cleared the result");
+
+    let board = app.board(t_id).await.expect("board");
+    let pending = board
+        .matches
+        .iter()
+        .filter(|m| m.pool.is_none() && m.status == SchedStatus::Pending)
+        .count();
+    assert_eq!(pending, 2, "both semis playable again after reset");
+
+    // A pool match cannot be reset.
+    let pm = MatchId::new();
+    let pool = PoolId::new();
+    app.match_cmd(
+        pm,
+        MatchCommand::Schedule {
+            match_id: pm,
+            tournament_id: t_id,
+            format: MatchFormat::BestOf1,
+            team_a: teams[0],
+            team_b: teams[1],
+            pool_id: Some(pool),
+        },
+    )
+    .await
+    .expect("schedule pool");
+    assert!(app.reset_bracket_match(pm).await.is_err(), "pool match reset rejected");
+}

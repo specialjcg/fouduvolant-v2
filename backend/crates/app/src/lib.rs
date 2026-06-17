@@ -900,6 +900,28 @@ impl App {
         Ok(())
     }
 
+    /// Reset a single bracket match so it can be replayed: drop its event stream,
+    /// then reconcile the bracket. The match is re-created fresh (its two teams
+    /// are still known from the upstream results) and any later-round match that
+    /// depended on its now-removed result is dropped. Pool matches are rejected.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] if the match is unknown, is a pool match, or on a
+    /// store/command failure.
+    pub async fn reset_bracket_match(&self, match_id: MatchId) -> Result<(), AppError> {
+        let Some(view) = self.match_projection().await?.get(match_id).cloned() else {
+            return Err(AppError::NotFound("match"));
+        };
+        if view.pool.is_some() {
+            return Err(AppError::Command(
+                "seul un match de bracket peut être réinitialisé".into(),
+            ));
+        }
+        self.delete_match(match_id).await?;
+        self.reconcile_bracket(view.tournament).await?;
+        Ok(())
+    }
+
     /// Correct a match's score, then — if it is a bracket match whose winner
     /// changed — reconcile the downstream bracket (delete now-invalid matches of
     /// later rounds and re-create the correct ones).
