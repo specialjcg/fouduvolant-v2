@@ -64,6 +64,9 @@ pub struct MatchView {
     pub points_a: u16,
     /// Points scored by side B across all recorded sets.
     pub points_b: u16,
+    /// Each recorded set as `(a, b)` in play order — lets the UI show
+    /// "21-15 21-10" instead of a summed 42 for best-of-3 matches.
+    pub sets: Vec<(u16, u16)>,
 }
 
 impl MatchView {
@@ -532,6 +535,7 @@ mod tests {
             winner: None,
             points_a: 0,
             points_b: 0,
+            sets: Vec::new(),
         }
     }
 
@@ -588,6 +592,7 @@ mod tests {
             winner: Some(team(10)),
             points_a: 21,
             points_b: 11,
+            sets: vec![(21, 11)],
         };
         let btb = pending_match(1, p, team(10), team(20)); // reuses team 10
         let fresh = pending_match(2, p, team(30), team(31));
@@ -617,6 +622,7 @@ mod tests {
             winner: Some(team(10)),
             points_a: 21,
             points_b: 11,
+            sets: vec![(21, 11)],
         };
         let only = pending_match(1, p, team(10), team(20));
         let matches = vec![just_done, only.clone()];

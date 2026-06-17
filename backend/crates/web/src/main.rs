@@ -428,8 +428,7 @@ async fn record_set(
     Path(id): Path<Uuid>,
     Json(body): Json<RecordSetBody>,
 ) -> Result<Response, ApiError> {
-    app.match_cmd(MatchId(id), MatchCommand::RecordSet { a: body.a, b: body.b })
-        .await?;
+    app.record_set(MatchId(id), body.a, body.b).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

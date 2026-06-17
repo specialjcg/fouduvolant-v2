@@ -94,6 +94,7 @@ impl MatchProjection {
                         winner: None,
                         points_a: 0,
                         points_b: 0,
+                        sets: Vec::new(),
                     },
                 );
             }
@@ -118,6 +119,7 @@ impl MatchProjection {
                 if let Some(v) = self.views.get_mut(&id) {
                     v.points_a += u16::from(set.a());
                     v.points_b += u16::from(set.b());
+                    v.sets.push((u16::from(set.a()), u16::from(set.b())));
                 }
             }
             MatchEvent::Completed { winner } => {
@@ -147,6 +149,7 @@ impl MatchProjection {
                 if let Some(v) = self.views.get_mut(&id) {
                     v.points_a = u16::from(set.a());
                     v.points_b = u16::from(set.b());
+                    v.sets = vec![(u16::from(set.a()), u16::from(set.b()))];
                     v.status = SchedStatus::Done;
                     v.winner = Some(*winner);
                     if v.done_order.is_none() {
@@ -197,6 +200,35 @@ mod tests {
             team_b: b,
             pool_id: Some(pool),
         }
+    }
+
+    #[test]
+    fn keeps_individual_sets_for_best_of_3() {
+        // A best-of-3 match keeps each set so the UI can show "21-15 21-10"
+        // rather than the summed 42. points_* remain the sum (used by standings).
+        let mut proj = MatchProjection::new();
+        let (id, pool) = (MatchId::new(), PoolId::new());
+        let (a, b) = (TeamId::new(), TeamId::new());
+
+        proj.apply(
+            id,
+            &MatchEvent::Scheduled {
+                match_id: id,
+                tournament_id: TournamentId::new(),
+                format: MatchFormat::BestOf3,
+                team_a: a,
+                team_b: b,
+                pool_id: Some(pool),
+            },
+        );
+        proj.apply(id, &MatchEvent::MatchStarted { court_id: CourtId::new() });
+        proj.apply(id, &MatchEvent::SetRecorded { set: SetScore::new(21, 15).unwrap() });
+        proj.apply(id, &MatchEvent::SetRecorded { set: SetScore::new(21, 10).unwrap() });
+
+        let v = proj.get(id).unwrap();
+        assert_eq!(v.sets, vec![( 21, 15 ), ( 21, 10 )], "both sets kept in order");
+        assert_eq!(v.points_a, 42, "points_a is the running sum (21+21)");
+        assert_eq!(v.points_b, 25);
     }
 
     #[test]

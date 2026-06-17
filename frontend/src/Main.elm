@@ -161,6 +161,7 @@ type alias MatchV =
     , pointsA : Int
     , pointsB : Int
     , pool : Maybe String
+    , sets : List ( Int, Int )
     }
 
 
@@ -1056,6 +1057,7 @@ matchVDec =
         |> andMap (D.field "points_a" D.int)
         |> andMap (D.field "points_b" D.int)
         |> andMap (D.field "pool" (D.nullable D.string))
+        |> andMap (D.field "sets" (D.list (D.map2 Tuple.pair (D.index 0 D.int) (D.index 1 D.int))))
 
 
 
@@ -2040,6 +2042,19 @@ nodeHead label =
     div [ class "node-head" ] [ text label ]
 
 
+{-| Display the recorded sets ("21-15  21-10") for a finished match; falls back
+to the summed points if no per-set detail is available. -}
+setsLabel : MatchV -> String
+setsLabel m =
+    if List.isEmpty m.sets then
+        String.fromInt m.pointsA ++ "-" ++ String.fromInt m.pointsB
+
+    else
+        m.sets
+            |> List.map (\( a, b ) -> String.fromInt a ++ "-" ++ String.fromInt b)
+            |> String.join "  "
+
+
 doneNode : Sel -> Dict String String -> MatchV -> Html Msg
 doneNode s names m =
     let
@@ -2060,7 +2075,7 @@ doneNode s names m =
             else
                 div [ class "row" ]
                     [ span [ Html.Attributes.style "font-weight" "600" ]
-                        [ text (String.fromInt m.pointsA ++ "-" ++ String.fromInt m.pointsB) ]
+                        [ text (setsLabel m) ]
                     , button [ class "secondary", onClick (EditScore m.id m.pointsA m.pointsB) ] [ text "✎" ]
                     ]
     in

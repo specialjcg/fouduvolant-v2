@@ -881,6 +881,25 @@ impl App {
         Ok(created)
     }
 
+    /// Record a set, then — for a bracket match — advance the draw so any match
+    /// whose two teams are now known is scheduled immediately, without waiting
+    /// for a manual "Avancer".
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a command or database failure.
+    pub async fn record_set(&self, match_id: MatchId, a: u8, b: u8) -> Result<(), AppError> {
+        self.match_cmd(match_id, MatchCommand::RecordSet { a, b })
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+
+        if let Some(view) = self.match_projection().await?.get(match_id) {
+            if view.pool.is_none() {
+                self.advance_bracket(view.tournament).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Correct a match's score, then — if it is a bracket match whose winner
     /// changed — reconcile the downstream bracket (delete now-invalid matches of
     /// later rounds and re-create the correct ones).

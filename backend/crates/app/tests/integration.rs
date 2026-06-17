@@ -9,6 +9,7 @@
 use domain::bracket::BracketKind;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
 use domain::matches::MatchCommand;
+use domain::scheduling::SchedStatus;
 use domain::score::MatchFormat;
 use domain::tournament::{Pool, TournamentCommand};
 
@@ -658,4 +659,123 @@ async fn per_pool_changes_the_qualified_count() {
     assert_eq!(one, 2, "per_pool=1 → 1 team per pool in the main draw");
     assert_eq!(two, 4, "per_pool=2 → 2 teams per pool in the main draw");
     assert!(two > one, "raising per_pool enlarges the main draw");
+}
+
+/// A bracket match becomes playable as soon as both its teams are known —
+/// recording a result must schedule the next round automatically, so the
+/// operator can launch any match without first clicking "Avancer".
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn recording_a_bracket_result_auto_advances() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "AutoAdvance".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    // Two pools of three; in each, t0 beats both and t1 beats t2 → ranks 1/2/3.
+    let p1 = [TeamId::new(), TeamId::new(), TeamId::new()];
+    let p2 = [TeamId::new(), TeamId::new(), TeamId::new()];
+    for (i, id) in p1.iter().chain(p2.iter()).enumerate() {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: *id,
+                name: format!("T{i}"),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+    let (pool1, pool2) = (PoolId::new(), PoolId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![
+                Pool { id: pool1, name: "P1".into(), teams: p1.to_vec() },
+                Pool { id: pool2, name: "P2".into(), teams: p2.to_vec() },
+            ],
+        },
+    )
+    .await
+    .expect("pools");
+    let court = CourtId::new();
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![court] })
+        .await
+        .expect("courts");
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pools");
+
+    for (a, b, pool) in [
+        (p1[0], p1[1], pool1),
+        (p1[0], p1[2], pool1),
+        (p2[0], p2[1], pool2),
+        (p2[0], p2[2], pool2),
+    ] {
+        let m = MatchId::new();
+        app.match_cmd(
+            m,
+            MatchCommand::Schedule {
+                match_id: m,
+                tournament_id: t_id,
+                format: MatchFormat::BestOf1,
+                team_a: a,
+                team_b: b,
+                pool_id: Some(pool),
+            },
+        )
+        .await
+        .expect("schedule");
+        app.match_cmd(m, MatchCommand::Start { court_id: court }).await.expect("start");
+        app.match_cmd(m, MatchCommand::RecordSet { a: 21, b: 0 }).await.expect("record");
+    }
+
+    // 2 qualified/pool → main draw of 4 (two semis + a final).
+    app.generate_bracket(t_id, 2).await.expect("draw");
+
+    // Play every playable bracket match via the auto-advancing path, never
+    // calling advance_bracket. If auto-advance works, the final gets scheduled
+    // and played; otherwise the loop runs dry after the semis.
+    let mut rounds = 0;
+    loop {
+        let board = app.board(t_id).await.expect("board");
+        let pending: Vec<MatchId> = board
+            .matches
+            .iter()
+            .filter(|m| m.pool.is_none() && m.status == SchedStatus::Pending)
+            .map(|m| m.id)
+            .collect();
+        if pending.is_empty() {
+            break;
+        }
+        for id in pending {
+            app.match_cmd(id, MatchCommand::Start { court_id: court }).await.expect("start bracket");
+            app.record_set(id, 21, 0).await.expect("record bracket");
+        }
+        rounds += 1;
+        assert!(rounds < 6, "bracket should converge");
+    }
+
+    // The main final exists, is decided, and was reached without a manual advance.
+    let view = app.bracket_view(t_id).await.expect("view");
+    let final_node = view
+        .iter()
+        .find(|n| matches!(n.kind, BracketKind::Main) && n.round == 2);
+    let final_node = final_node.expect("a main final exists");
+    assert!(final_node.team_a.is_some() && final_node.team_b.is_some(), "final has both teams");
+    assert!(final_node.winner.is_some(), "final was played thanks to auto-advance");
+    assert!(rounds >= 2, "took at least a semis round then a final round");
 }
