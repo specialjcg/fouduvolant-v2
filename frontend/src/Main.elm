@@ -264,6 +264,7 @@ type Msg
     | GoStep Step
     | SetNumPools String
     | AutoPools
+    | ProposeIdealPools
     | StartPools
     | StartFinals
     | ResetTournament
@@ -497,6 +498,22 @@ update msg model =
 
                     else
                         ( model, postPools model.api s.id (buildPools n s.view.teams) )
+                )
+
+        ProposeIdealPools ->
+            withSel model
+                (\s ->
+                    let
+                        n =
+                            suggestPools (List.length s.view.teams)
+                    in
+                    if List.length s.view.teams < 2 then
+                        ( model, Cmd.none )
+
+                    else
+                        ( mapSel (\x -> { x | numPools = String.fromInt n }) model
+                        , postPools model.api s.id (buildPools n s.view.teams)
+                        )
                 )
 
         StartPools ->
@@ -1360,10 +1377,13 @@ viewPools s =
             ]
         , h3 [] [ text "Répartition" ]
         , div [ class "row" ]
-            [ text "Nombre de poules :"
+            [ button [ onClick ProposeIdealPools, disabled (List.length s.view.teams < 2) ]
+                [ text ("Proposer l'idéal (" ++ String.fromInt (suggestPools (List.length s.view.teams)) ++ " poules)") ]
+            , span [ class "muted" ] [ text "ou" ]
+            , text "Nombre de poules :"
             , input [ type_ "number", class "score", value s.numPools, onInput SetNumPools ] []
-            , button [ onClick AutoPools, disabled (List.length s.view.teams < 2) ]
-                [ text "Répartir automatiquement" ]
+            , button [ class "secondary", onClick AutoPools, disabled (List.length s.view.teams < 2) ]
+                [ text "Répartir" ]
             ]
         , if List.isEmpty s.view.pools then
             p [ class "muted" ] [ text "Aucune poule. Répartis les équipes ci-dessus." ]
@@ -1848,7 +1868,11 @@ poolRow editable names courts matches assigned ranked p =
     in
     div (class "match" :: dropZone)
         [ div [ class "row", Html.Attributes.style "justify-content" "space-between" ]
-            [ span [ Html.Attributes.style "font-weight" "600" ] [ text p.name ]
+            [ span [ Html.Attributes.style "font-weight" "600" ]
+                [ text p.name
+                , span [ class "muted", Html.Attributes.style "font-weight" "400", Html.Attributes.style "margin-left" ".4rem" ]
+                    [ text ("(" ++ String.fromInt (List.length p.teams) ++ " équipes)") ]
+                ]
             , courtSelect courts assigned p.id
             ]
         , if editable then
