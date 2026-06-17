@@ -20,16 +20,12 @@ use infrastructure::{Db, EventStore};
 mod services;
 
 use domain::bracket::{Bracket, BracketCommand, BracketError, BracketKind};
-use domain::generation::round_robin_pairs;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
 use domain::matches::{Match, MatchCommand, MatchError, MatchEvent};
 use domain::projections::MatchProjection;
-use domain::scheduling::{forecast, plan, CourtPlan, MatchView, SchedStatus};
+use domain::scheduling::{CourtPlan, MatchView, SchedStatus};
 use domain::score::MatchFormat;
-use domain::standings::{pool_standings, MatchResult};
-use domain::tournament::{
-    Phase, Pool as DomainPool, Tournament, TournamentCommand, TournamentError, TournamentEvent,
-};
+use domain::tournament::{Phase, Pool as DomainPool, Tournament, TournamentEvent};
 
 /// A tournament list entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +148,7 @@ pub struct ForecastCourt {
 }
 
 /// Average match duration (minutes) used for the forecast.
-const MATCH_MINUTES: u32 = 15;
+pub(crate) const MATCH_MINUTES: u32 = 15;
 
 /// The live board for a tournament: court plans plus the underlying matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,18 +229,6 @@ impl App {
         self.db.run_migrations(MIGRATION_SQL).await
     }
 
-    /// Execute a command against a tournament aggregate.
-    ///
-    /// # Errors
-    /// Returns [`AggregateError`] if the command is rejected or persistence fails.
-    pub async fn tournament(
-        &self,
-        id: TournamentId,
-        command: TournamentCommand,
-    ) -> Result<(), AggregateError<TournamentError>> {
-        self.tournaments.execute(&id.to_string(), command).await
-    }
-
     /// Execute a command against a match aggregate.
     ///
     /// # Errors
@@ -255,131 +239,6 @@ impl App {
         command: MatchCommand,
     ) -> Result<(), AggregateError<MatchError>> {
         self.matches.execute(&id.to_string(), command).await
-    }
-
-    /// Schedule the single round-robin matches for a pool (every team plays
-    /// every other once). Idempotent: pairs already scheduled for the pool are
-    /// skipped, so re-running only fills gaps. Returns the matches created.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] if the tournament or pool is unknown, or on a
-    /// database / command failure.
-    pub async fn generate_pool_matches(
-        &self,
-        tournament_id: TournamentId,
-        pool_id: PoolId,
-    ) -> Result<Vec<MatchId>, AppError> {
-        let view = self
-            .tournament_view(tournament_id)
-            .await?
-            .ok_or(AppError::NotFound("tournament"))?;
-        let pool = view
-            .pools
-            .iter()
-            .find(|p| p.id == pool_id)
-            .ok_or(AppError::NotFound("pool"))?;
-        let format = view.pool_format;
-
-        let unordered = |a: TeamId, b: TeamId| if a <= b { (a, b) } else { (b, a) };
-        let existing: std::collections::HashSet<(TeamId, TeamId)> = self
-            .match_projection()
-            .await?
-            .views()
-            .into_iter()
-            .filter(|v| v.tournament == tournament_id && v.pool == Some(pool_id))
-            .map(|v| unordered(v.team_a, v.team_b))
-            .collect();
-
-        let mut created = Vec::new();
-        for (a, b) in round_robin_pairs(&pool.teams) {
-            if existing.contains(&unordered(a, b)) {
-                continue;
-            }
-            let match_id = MatchId::new();
-            self.match_cmd(
-                match_id,
-                MatchCommand::Schedule {
-                    match_id,
-                    tournament_id,
-                    format,
-                    team_a: a,
-                    team_b: b,
-                    pool_id: Some(pool_id),
-                },
-            )
-            .await
-            .map_err(|e| AppError::Command(e.to_string()))?;
-            created.push(match_id);
-        }
-        Ok(created)
-    }
-
-    /// List every tournament with its current phase.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] on a database or deserialization failure.
-    pub async fn list_tournaments(&self) -> Result<Vec<TournamentSummary>, AppError> {
-        let mut out = Vec::new();
-        for id_str in self.db.created_tournament_ids().await? {
-            let id = TournamentId(id_str.parse().map_err(AppError::BadId)?);
-            if let Some(view) = self.tournament_view(id).await? {
-                out.push(TournamentSummary {
-                    id,
-                    name: view.name,
-                    phase: view.phase,
-                });
-            }
-        }
-        Ok(out)
-    }
-
-    /// Reset a tournament for a fresh launch: deletes all its matches and the
-    /// bracket draw, and reopens the draft (teams / pools / courts kept).
-    ///
-    /// # Errors
-    /// Returns [`AppError`] on a database or command failure.
-    /// Redo the pools live after a no-show: only allowed while no pool match has
-    /// been played. Wipes the (unplayed) matches and reopens the draft, keeping
-    /// teams and pools so the absent team can be removed and the pools redrawn.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] if a pool match already has a result, or on failure.
-    pub async fn redo_pools(&self, tournament_id: TournamentId) -> Result<(), AppError> {
-        let played = self
-            .match_projection()
-            .await?
-            .views()
-            .into_iter()
-            .any(|v| v.tournament == tournament_id && v.pool.is_some() && v.winner.is_some());
-        if played {
-            return Err(AppError::Command(
-                "des matchs de poule ont déjà été joués — refaire les poules est impossible".into(),
-            ));
-        }
-        self.reset_tournament(tournament_id).await
-    }
-
-    pub async fn reset_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
-        let tid = tournament_id.to_string();
-        self.db.delete_tournament_matches(&tid).await?;
-        self.db.delete_aggregate("Bracket", &tid).await?;
-        self.tournament(tournament_id, TournamentCommand::ReopenDraft)
-            .await
-            .map_err(|e| AppError::Command(e.to_string()))?;
-        Ok(())
-    }
-
-    /// Hard-delete a tournament: removes its event streams (Tournament +
-    /// Bracket, both keyed by the tournament id) and all its matches' streams.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] on a database failure.
-    pub async fn delete_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
-        let tid = tournament_id.to_string();
-        self.db.delete_tournament_matches(&tid).await?;
-        // Tournament + Bracket aggregates share the tournament id.
-        self.db.delete_by_id(&tid).await?;
-        Ok(())
     }
 
     /// Fold a tournament's event stream into a [`TournamentView`].
@@ -457,86 +316,6 @@ impl App {
         Ok(Some(view))
     }
 
-    /// Build the live board (court plans + match views) for a tournament.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] on a database or deserialization failure.
-    pub async fn board(&self, tournament_id: TournamentId) -> Result<BoardView, AppError> {
-        let courts = self.tournament_courts(tournament_id).await?;
-        let matches: Vec<MatchView> = self
-            .match_projection()
-            .await?
-            .views()
-            .into_iter()
-            .filter(|v| v.tournament == tournament_id)
-            .collect();
-        let map = self.pool_court_map(tournament_id).await?;
-        let plans = plan(&matches, &courts, &map);
-        Ok(BoardView {
-            courts: plans,
-            matches,
-        })
-    }
-
-    /// Full per-court forecast (prévisionnel) with names and estimated times.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] on a store or deserialization failure.
-    pub async fn schedule(
-        &self,
-        tournament_id: TournamentId,
-    ) -> Result<Vec<ForecastCourt>, AppError> {
-        let courts = self.tournament_courts(tournament_id).await?;
-        let map = self.pool_court_map(tournament_id).await?;
-        let views: Vec<MatchView> = self
-            .match_projection()
-            .await?
-            .views()
-            .into_iter()
-            .filter(|v| v.tournament == tournament_id)
-            .collect();
-        let by_id: std::collections::HashMap<MatchId, MatchView> =
-            views.iter().map(|v| (v.id, v.clone())).collect();
-
-        let (team_names, pool_names) = match self.tournament_view(tournament_id).await? {
-            Some(view) => (
-                view.teams
-                    .iter()
-                    .map(|t| (t.id, t.name.clone()))
-                    .collect::<std::collections::HashMap<_, _>>(),
-                view.pools
-                    .iter()
-                    .map(|p| (p.id, p.name.clone()))
-                    .collect::<std::collections::HashMap<_, _>>(),
-            ),
-            None => Default::default(),
-        };
-        let name = |id: TeamId| team_names.get(&id).cloned().unwrap_or_default();
-
-        Ok(forecast(&views, &courts, &map)
-            .into_iter()
-            .map(|(court, ids)| ForecastCourt {
-                court,
-                matches: ids
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(i, id)| {
-                        by_id.get(&id).map(|v| ForecastMatch {
-                            id,
-                            team_a: name(v.team_a),
-                            team_b: name(v.team_b),
-                            pool: v.pool.and_then(|p| pool_names.get(&p).cloned()),
-                            status: v.status,
-                            points_a: v.points_a,
-                            points_b: v.points_b,
-                            eta_min: i as u32 * MATCH_MINUTES,
-                        })
-                    })
-                    .collect(),
-            })
-            .collect())
-    }
-
     /// Manual pool→court assignments, folded from the tournament events.
     async fn pool_court_map(
         &self,
@@ -549,68 +328,6 @@ impl App {
             }
         }
         Ok(map)
-    }
-
-    /// Compute ranked standings for every pool of a tournament.
-    ///
-    /// # Errors
-    /// Returns [`AppError`] on a database or deserialization failure.
-    pub async fn standings(
-        &self,
-        tournament_id: TournamentId,
-    ) -> Result<Vec<PoolStandingsView>, AppError> {
-        let Some(view) = self.tournament_view(tournament_id).await? else {
-            return Ok(Vec::new());
-        };
-        let names: std::collections::HashMap<TeamId, String> = view
-            .teams
-            .iter()
-            .map(|t| (t.id, t.name.clone()))
-            .collect();
-
-        let matches = self.match_projection().await?;
-        let done: Vec<MatchView> = matches
-            .views()
-            .into_iter()
-            .filter(|v| v.tournament == tournament_id && v.winner.is_some())
-            .collect();
-
-        let mut out = Vec::with_capacity(view.pools.len());
-        for pool in &view.pools {
-            let results: Vec<MatchResult> = done
-                .iter()
-                .filter(|v| v.pool == Some(pool.id))
-                .map(|v| MatchResult {
-                    team_a: v.team_a,
-                    team_b: v.team_b,
-                    winner: v.winner.expect("filtered to winners"),
-                    points_a: u32::from(v.points_a),
-                    points_b: u32::from(v.points_b),
-                })
-                .collect();
-
-            let rows = pool_standings(&pool.teams, &results)
-                .into_iter()
-                .enumerate()
-                .map(|(i, s)| StandingRow {
-                    team: s.team,
-                    name: names.get(&s.team).cloned().unwrap_or_default(),
-                    rank: i as u32 + 1,
-                    played: s.played,
-                    wins: s.wins,
-                    points_for: s.points_for,
-                    points_against: s.points_against,
-                    diff: s.diff(),
-                })
-                .collect();
-
-            out.push(PoolStandingsView {
-                pool_id: pool.id,
-                name: pool.name.clone(),
-                rows,
-            });
-        }
-        Ok(out)
     }
 
     /// Execute a command against a tournament's bracket aggregate.
