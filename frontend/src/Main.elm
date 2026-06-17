@@ -15,6 +15,7 @@ import Html.Events exposing (on, onClick, onInput, preventDefaultOn)
 import Http
 import Json.Decode as D
 import Json.Encode as E
+import Task
 import Time
 
 
@@ -42,6 +43,8 @@ type alias Model =
     , err : Maybe String
     , wantStep : Step
     , showPast : Bool
+    , now : Time.Posix
+    , zone : Time.Zone
     }
 
 
@@ -73,6 +76,7 @@ type Step
     = StepTeams
     | StepPools
     | StepBoard
+    | StepSchedule
     | StepFinals
     | StepRanking
 
@@ -186,9 +190,13 @@ init flags =
       , err = Nothing
       , wantStep = want
       , showPast = flags.showPast
+      , now = Time.millisToPosix 0
+      , zone = Time.utc
       }
     , Cmd.batch
         [ loadTournaments flags.apiBase
+        , Time.here |> Task.perform GotZone
+        , Time.now |> Task.perform Tick
         , if tid == "" then
             Cmd.none
 
@@ -206,6 +214,9 @@ stepFromString s =
 
         "terrains" ->
             StepBoard
+
+        "previsionnel" ->
+            StepSchedule
 
         "finales" ->
             StepFinals
@@ -277,6 +288,7 @@ type Msg
     | ResetMatch String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
+    | GotZone Time.Zone
     | ToggleShowPast
 
 
@@ -657,8 +669,11 @@ update msg model =
         Mutated (Err e) ->
             ( { model | err = Just (httpErr e) }, refresh model )
 
-        Tick _ ->
-            ( model, refreshBoard model )
+        Tick t ->
+            ( { model | now = t }, refreshBoard model )
+
+        GotZone z ->
+            ( { model | zone = z }, Cmd.none )
 
 
 {-| Keep transient input fields when a fresh TView arrives. -}
@@ -1171,7 +1186,7 @@ view model =
                     text ""
             , case model.sel of
                 Just s ->
-                    viewTournament model.showPast s
+                    viewTournament model.showPast model.now model.zone s
 
                 Nothing ->
                     viewList model
@@ -1211,8 +1226,8 @@ tournamentRow t =
         ]
 
 
-viewTournament : Bool -> Sel -> Html Msg
-viewTournament showPast s =
+viewTournament : Bool -> Time.Posix -> Time.Zone -> Sel -> Html Msg
+viewTournament showPast now zone s =
     let
         names =
             teamNames s.view.teams
@@ -1227,6 +1242,9 @@ viewTournament showPast s =
 
                 StepBoard ->
                     viewBoard showPast s names
+
+                StepSchedule ->
+                    viewSchedule now zone s
 
                 StepFinals ->
                     viewBracket s
@@ -1267,8 +1285,9 @@ stepper active =
         [ item StepTeams "1 · Équipes"
         , item StepPools "2 · Poules"
         , item StepBoard "3 · Terrains"
-        , item StepFinals "4 · Finales"
-        , item StepRanking "5 · Classement"
+        , item StepSchedule "4 · Prévisionnel"
+        , item StepFinals "5 · Finales"
+        , item StepRanking "6 · Classement"
         ]
 
 
@@ -2064,42 +2083,56 @@ viewBoard showPast s names =
           else
             div [ class "lanes" ] (List.indexedMap (viewLane showPast s names) s.board.courts)
         , viewPending s names
-        , viewForecast s
         ]
 
 
-{-| Prévisionnel : liste complète des matchs par terrain, avec heure estimée. -}
-viewForecast : Sel -> Html Msg
-viewForecast s =
-    if List.all (\fc -> List.isEmpty fc.matches) s.schedule then
-        text ""
+{-| Prévisionnel : page dédiée, horaires réels = heure système + ETA cumulée. -}
+viewSchedule : Time.Posix -> Time.Zone -> Sel -> Html Msg
+viewSchedule now zone s =
+    div [ class "panel" ]
+        [ h2 [] [ text "Prévisionnel" ]
+        , p [ class "muted" ]
+            [ text ("Horaires estimés (≈15 min/match) à partir de " ++ clockAt zone now 0) ]
+        , if List.all (\fc -> List.isEmpty fc.matches) s.schedule then
+            p [ class "muted" ] [ text "Rien à prévoir pour l'instant." ]
 
-    else
-        div [ Html.Attributes.style "margin-top" "1.2rem" ]
-            (h3 [ class "muted" ] [ text "Prévisionnel par terrain (≈15 min/match)" ]
-                :: List.indexedMap forecastCourtView s.schedule
-            )
+          else
+            div [] (List.indexedMap (forecastCourtView now zone) s.schedule)
+        ]
 
 
-forecastCourtView : Int -> ForecastCourt -> Html Msg
-forecastCourtView idx fc =
+{-| Wall-clock "HHhMM" of `base` shifted by `etaMin` minutes, in `zone`. -}
+clockAt : Time.Zone -> Time.Posix -> Int -> String
+clockAt zone base etaMin =
+    let
+        p =
+            Time.millisToPosix (Time.posixToMillis base + etaMin * 60000)
+
+        pad n =
+            String.padLeft 2 '0' (String.fromInt n)
+    in
+    pad (Time.toHour zone p) ++ "h" ++ pad (Time.toMinute zone p)
+
+
+forecastCourtView : Time.Posix -> Time.Zone -> Int -> ForecastCourt -> Html Msg
+forecastCourtView now zone idx fc =
     div [ Html.Attributes.style "margin-bottom" ".8rem" ]
         [ h4 [ Html.Attributes.style "margin" ".3rem 0", Html.Attributes.style "color" "var(--primary)" ]
             [ text ("Terrain " ++ String.fromInt (idx + 1)) ]
         , table []
             (tr []
-                [ th [] [ text "≈ Heure" ]
+                [ th [] [ text "Heure" ]
                 , th [] [ text "Poule" ]
                 , th [] [ text "Match" ]
                 , th [] [ text "Score" ]
                 ]
-                :: List.map forecastRow fc.matches
+                :: List.map (forecastRow now zone) fc.matches
             )
         ]
 
 
-forecastRow : ForecastMatch -> Html Msg
-forecastRow m =
+forecastRow : Time.Posix -> Time.Zone -> ForecastMatch -> Html Msg
+forecastRow now zone m =
     let
         score =
             if m.status == "Done" then
@@ -2112,23 +2145,11 @@ forecastRow m =
                 "—"
     in
     tr []
-        [ td [] [ text ("+" ++ fmtEta m.etaMin) ]
+        [ td [] [ text (clockAt zone now m.etaMin) ]
         , td [] [ text (Maybe.withDefault "" m.pool) ]
         , td [] [ text (m.teamA ++ " vs " ++ m.teamB) ]
         , td [] [ text score ]
         ]
-
-
-fmtEta : Int -> String
-fmtEta mins =
-    let
-        h =
-            mins // 60
-
-        mm =
-            modBy 60 mins
-    in
-    String.fromInt h ++ "h" ++ String.padLeft 2 '0' (String.fromInt mm)
 
 
 {-| One court as a horizontal timeline: completed (left) → current → next →
