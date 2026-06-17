@@ -575,7 +575,11 @@ update msg model =
                         Just ( a, b ) ->
                             case ( parseScore a, parseScore b ) of
                                 ( Just na, Just nb ) ->
-                                    ( model, recordSet model.api matchId na nb )
+                                    -- Clear the inputs so the next set (best-of-3)
+                                    -- starts empty.
+                                    ( mapSel (\x -> { x | scores = Dict.remove matchId x.scores }) model
+                                    , recordSet model.api matchId na nb
+                                    )
 
                                 _ ->
                                     ( model, Cmd.none )
@@ -2124,6 +2128,12 @@ liveNode s names m =
     div [ class "node live" ]
         [ nodeHead "● En cours"
         , div [ class "node-teams" ] [ text (matchLabel names m) ]
+        , if List.isEmpty m.sets then
+            text ""
+
+          else
+            div [ class "muted", Html.Attributes.style "font-size" ".78rem", Html.Attributes.style "margin-bottom" ".25rem" ]
+                [ text ("Sets : " ++ setsLabel m) ]
         , scoreEntry s m.id
         ]
 
