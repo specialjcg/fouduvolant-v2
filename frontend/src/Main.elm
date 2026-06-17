@@ -112,6 +112,8 @@ type alias TView =
     , pools : List PoolV
     , courts : List String
     , poolCourts : List PoolCourt
+    , bracketFormat : String
+    , roundFormats : Dict String String
     }
 
 
@@ -1031,14 +1033,16 @@ teamDec =
 
 tviewDec : D.Decoder TView
 tviewDec =
-    D.map7 TView
-        (D.field "id" D.string)
-        (D.field "name" D.string)
-        (D.field "phase" D.string)
-        (D.field "teams" (D.list teamDec))
-        (D.field "pools" (D.list poolDec))
-        (D.field "courts" (D.list D.string))
-        (D.field "pool_courts" (D.list (D.map2 PoolCourt (D.field "pool" D.string) (D.field "court" D.string))))
+    D.succeed TView
+        |> andMap (D.field "id" D.string)
+        |> andMap (D.field "name" D.string)
+        |> andMap (D.field "phase" D.string)
+        |> andMap (D.field "teams" (D.list teamDec))
+        |> andMap (D.field "pools" (D.list poolDec))
+        |> andMap (D.field "courts" (D.list D.string))
+        |> andMap (D.field "pool_courts" (D.list (D.map2 PoolCourt (D.field "pool" D.string) (D.field "court" D.string))))
+        |> andMap (D.oneOf [ D.field "bracket_format" D.string, D.succeed "BestOf1" ])
+        |> andMap (D.oneOf [ D.field "bracket_round_formats" (D.dict D.string), D.succeed Dict.empty ])
 
 
 poolDec : D.Decoder PoolV
@@ -1392,15 +1396,35 @@ viewBracket s =
             , button [ class "secondary", onClick AdvanceBracket ] [ text "Avancer" ]
             , button [ class "danger", onClick ResetBracket ] [ text "Réinitialiser le bracket" ]
             , span [ class "muted", Html.Attributes.style "margin-left" ".5rem" ] [ text "Tout :" ]
-            , button [ class "secondary", onClick (SetFinalsFormat "BestOf1") ] [ text "1 set" ]
-            , button [ class "secondary", onClick (SetFinalsFormat "BestOf3") ] [ text "2 sets gagnants" ]
+            , button
+                [ class
+                    (if s.view.bracketFormat == "BestOf1" then
+                        ""
+
+                     else
+                        "secondary"
+                    )
+                , onClick (SetFinalsFormat "BestOf1")
+                ]
+                [ text "1 set" ]
+            , button
+                [ class
+                    (if s.view.bracketFormat == "BestOf3" then
+                        ""
+
+                     else
+                        "secondary"
+                    )
+                , onClick (SetFinalsFormat "BestOf3")
+                ]
+                [ text "2 sets gagnants" ]
             ]
         , if List.isEmpty s.bracket then
             p [ class "muted" ] [ text "Bracket non tiré." ]
 
           else
             div []
-                [ roundFormatBar (List.filter (\n -> n.kind == "Main") s.bracket)
+                [ roundFormatBar s.view.bracketFormat s.view.roundFormats (List.filter (\n -> n.kind == "Main") s.bracket)
                 , bracketTree "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
                 , bracketTree "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
                 ]
@@ -1415,8 +1439,8 @@ thirdPlaceRound =
 {-| Per-round format chooser: one "1 set / BO3" pair per round of the main draw,
 labelled by team count (8es, quarts, demi, finale). Applies by size to the
 consolation draw too. -}
-roundFormatBar : List BracketNode -> Html Msg
-roundFormatBar nodes =
+roundFormatBar : String -> Dict String String -> List BracketNode -> Html Msg
+roundFormatBar defaultFmt roundFormats nodes =
     let
         maxRound =
             nodes
@@ -1429,10 +1453,21 @@ roundFormatBar nodes =
             List.range 1 maxRound |> List.map (\r -> 2 ^ (maxRound - r + 1))
 
         control size =
+            let
+                cur =
+                    Dict.get (String.fromInt size) roundFormats |> Maybe.withDefault defaultFmt
+
+                cls want =
+                    if cur == want then
+                        ""
+
+                    else
+                        "secondary"
+            in
             span [ class "row", Html.Attributes.style "gap" "3px", Html.Attributes.style "align-items" "center" ]
                 [ span [ class "muted", Html.Attributes.style "font-size" ".78rem" ] [ text (roundSizeLabel size ++ " :") ]
-                , button [ class "secondary", onClick (SetRoundFormat size "BestOf1") ] [ text "1 set" ]
-                , button [ class "secondary", onClick (SetRoundFormat size "BestOf3") ] [ text "BO3" ]
+                , button [ class (cls "BestOf1"), onClick (SetRoundFormat size "BestOf1") ] [ text "1 set" ]
+                , button [ class (cls "BestOf3"), onClick (SetRoundFormat size "BestOf3") ] [ text "BO3" ]
                 ]
     in
     div [ class "row", Html.Attributes.style "flex-wrap" "wrap", Html.Attributes.style "gap" ".7rem", Html.Attributes.style "margin-bottom" ".6rem" ]
