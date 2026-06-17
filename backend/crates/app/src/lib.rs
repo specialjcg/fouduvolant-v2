@@ -932,6 +932,23 @@ impl App {
         Ok(())
     }
 
+    /// End a match by forfeit / retirement (`winner` takes it), then advance the
+    /// bracket if it was a bracket match.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a command or store failure.
+    pub async fn concede_match(&self, match_id: MatchId, winner: TeamId) -> Result<(), AppError> {
+        self.match_cmd(match_id, MatchCommand::Concede { winner })
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+        if let Some(view) = self.match_projection().await?.get(match_id) {
+            if view.pool.is_none() {
+                self.advance_bracket(view.tournament).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Reset the whole bracket: drop every finals match (main + consolation) and
     /// the draw itself, returning to the "not drawn" state so "Générer" can
     /// re-seed from scratch. Pools and their results are untouched.

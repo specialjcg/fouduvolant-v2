@@ -168,6 +168,7 @@ type alias MatchV =
     , pointsB : Int
     , pool : Maybe String
     , sets : List ( Int, Int )
+    , conceded : Bool
     }
 
 
@@ -287,6 +288,7 @@ type Msg
     | CancelEdit
     | Rescore String
     | ResetMatch String
+    | ConcedeMatch String String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
     | GotZone Time.Zone
@@ -680,6 +682,9 @@ update msg model =
         ResetMatch matchId ->
             ( model, resetMatch model.api matchId )
 
+        ConcedeMatch matchId winnerId ->
+            ( model, concedeMatch model.api matchId winnerId )
+
         Mutated (Ok _) ->
             ( model, refresh model )
 
@@ -1030,6 +1035,11 @@ resetMatch api matchId =
         }
 
 
+concedeMatch : String -> String -> String -> Cmd Msg
+concedeMatch api matchId winnerId =
+    postEmpty api ("/matches/" ++ matchId ++ "/concede") (E.object [ ( "winner", E.string winnerId ) ])
+
+
 dispatch : String -> String -> Cmd Msg
 dispatch api tid =
     Http.post
@@ -1176,6 +1186,7 @@ matchVDec =
         |> andMap (D.field "points_b" D.int)
         |> andMap (D.field "pool" (D.nullable D.string))
         |> andMap (D.field "sets" (D.list (D.map2 Tuple.pair (D.index 0 D.int) (D.index 1 D.int))))
+        |> andMap (D.oneOf [ D.field "conceded" D.bool, D.succeed False ])
 
 
 
@@ -2294,7 +2305,14 @@ doneNode s names m =
             else
                 div [ class "row" ]
                     (span [ Html.Attributes.style "font-weight" "600" ]
-                        [ text (setsLabel m) ]
+                        [ text
+                            (if m.conceded then
+                                "Forfait"
+
+                             else
+                                setsLabel m
+                            )
+                        ]
                         :: button [ class "secondary", onClick (EditScore m.id m.pointsA m.pointsB) ] [ text "✎" ]
                         :: (if m.pool == Nothing then
                                 [ button [ class "secondary", onClick (ResetMatch m.id), Html.Attributes.title "Réinitialiser ce match" ] [ text "↺" ] ]
@@ -2323,6 +2341,18 @@ liveNode s names m =
             div [ class "muted", Html.Attributes.style "font-size" ".78rem", Html.Attributes.style "margin-bottom" ".25rem" ]
                 [ text ("Sets : " ++ setsLabel m) ]
         , scoreEntry s m.id
+        , forfeitRow names m
+        ]
+
+
+{-| Forfeit / retirement: two buttons naming the team that *gives up*; the other
+wins. Works before start (no-show) or during play (abandon). -}
+forfeitRow : Dict String String -> MatchV -> Html Msg
+forfeitRow names m =
+    div [ class "row", Html.Attributes.style "gap" "3px", Html.Attributes.style "margin-top" ".25rem" ]
+        [ span [ class "muted", Html.Attributes.style "font-size" ".7rem" ] [ text "Forfait :" ]
+        , button [ class "secondary", onClick (ConcedeMatch m.id m.teamB) ] [ text (shortName (nameOf names m.teamA)) ]
+        , button [ class "secondary", onClick (ConcedeMatch m.id m.teamA) ] [ text (shortName (nameOf names m.teamB)) ]
         ]
 
 
@@ -2339,6 +2369,7 @@ suggestNode freeCourts names court m sg =
         , div [ class "node-teams" ] [ text (matchLabel names m) ]
         , div [ class "row", Html.Attributes.style "gap" "4px", Html.Attributes.style "flex-wrap" "wrap" ]
             (launchButtons court freeCourts m.id)
+        , forfeitRow names m
         ]
 
 

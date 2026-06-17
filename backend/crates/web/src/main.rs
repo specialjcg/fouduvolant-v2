@@ -87,6 +87,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/matches/{id}/sets", post(record_set))
         .route("/matches/{id}/rescore", post(rescore))
         .route("/matches/{id}/reset", post(reset_match))
+        .route("/matches/{id}/concede", post(concede_match))
         // Serve the built frontend (index.html, elm.js) for any non-API path.
         .fallback_service(ServeDir::new(static_dir()))
         .layer(TraceLayer::new_for_http())
@@ -193,6 +194,11 @@ struct SetFormatBody {
 struct SetRoundFormatBody {
     round_size: u16,
     format: MatchFormat,
+}
+
+#[derive(Deserialize)]
+struct ConcedeBody {
+    winner: Uuid,
 }
 
 #[derive(Serialize)]
@@ -461,6 +467,15 @@ async fn reset_match(
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     app.reset_bracket_match(MatchId(id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn concede_match(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ConcedeBody>,
+) -> Result<Response, ApiError> {
+    app.concede_match(MatchId(id), TeamId(body.winner)).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

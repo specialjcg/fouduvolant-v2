@@ -98,6 +98,12 @@ pub enum MatchCommand {
         /// Points for side B.
         b: u8,
     },
+    /// End the match by forfeit (no-show before start) or retirement (abandon
+    /// during play): the named team wins, keeping any sets already played.
+    Concede {
+        /// The team that wins.
+        winner: TeamId,
+    },
 }
 
 /// Events emitted by the [`Match`] aggregate.
@@ -140,6 +146,11 @@ pub enum MatchEvent {
         /// Recomputed winner.
         winner: TeamId,
     },
+    /// The match ended by forfeit / retirement; `winner` takes it.
+    Conceded {
+        /// The team that wins.
+        winner: TeamId,
+    },
 }
 
 impl DomainEvent for MatchEvent {
@@ -150,6 +161,7 @@ impl DomainEvent for MatchEvent {
             MatchEvent::SetRecorded { .. } => "SetRecorded",
             MatchEvent::Completed { .. } => "MatchCompleted",
             MatchEvent::Rescored { .. } => "ScoreCorrected",
+            MatchEvent::Conceded { .. } => "Conceded",
         }
         .to_string()
     }
@@ -180,6 +192,9 @@ pub enum MatchError {
     /// `Schedule` with identical teams.
     #[error("a team cannot play against itself")]
     SameTeam,
+    /// `Concede` naming a team that is not in this match.
+    #[error("the conceding winner is not a team of this match")]
+    UnknownWinner,
     /// The proposed set score is not a valid finished set.
     #[error(transparent)]
     Score(#[from] ScoreError),
@@ -286,6 +301,18 @@ impl Aggregate for Match {
                 };
                 sink.write(MatchEvent::Rescored { set, winner }, self).await;
             }
+
+            MatchCommand::Concede { winner } => {
+                match self.status {
+                    MatchStatus::NotStarted => return Err(MatchError::NotScheduled),
+                    MatchStatus::Completed => return Err(MatchError::AlreadyCompleted),
+                    MatchStatus::Scheduled | MatchStatus::InProgress => {}
+                }
+                if Some(winner) != self.team_a && Some(winner) != self.team_b {
+                    return Err(MatchError::UnknownWinner);
+                }
+                sink.write(MatchEvent::Conceded { winner }, self).await;
+            }
         }
         Ok(())
     }
@@ -320,6 +347,10 @@ impl Aggregate for Match {
             }
             MatchEvent::Rescored { set, winner } => {
                 self.sets = vec![set];
+                self.winner = Some(winner);
+                self.status = MatchStatus::Completed;
+            }
+            MatchEvent::Conceded { winner } => {
                 self.winner = Some(winner);
                 self.status = MatchStatus::Completed;
             }
@@ -359,6 +390,35 @@ mod tests {
             court_id: CourtId::new(),
         });
         (m, a, b)
+    }
+
+    #[tokio::test]
+    async fn concede_completes_with_named_winner() {
+        // No-show before start: conceding a scheduled match is allowed.
+        let (mut m, a, b) = scheduled(MatchFormat::BestOf1);
+        let events = exec(&mut m, MatchCommand::Concede { winner: a }).await.unwrap();
+        assert_eq!(events, vec![MatchEvent::Conceded { winner: a }]);
+        assert_eq!(m.status, MatchStatus::Completed);
+        assert_eq!(m.winner, Some(a));
+
+        // A non-participant cannot be the winner.
+        let (mut m2, _, _) = started(MatchFormat::BestOf3);
+        let outsider = TeamId::new();
+        assert!(matches!(
+            exec(&mut m2, MatchCommand::Concede { winner: outsider }).await,
+            Err(MatchError::UnknownWinner)
+        ));
+        let _ = b;
+    }
+
+    #[tokio::test]
+    async fn cannot_concede_a_completed_match() {
+        let (mut m, a, _b) = started(MatchFormat::BestOf1);
+        exec(&mut m, MatchCommand::RecordSet { a: 21, b: 0 }).await.unwrap();
+        assert!(matches!(
+            exec(&mut m, MatchCommand::Concede { winner: a }).await,
+            Err(MatchError::AlreadyCompleted)
+        ));
     }
 
     #[tokio::test]

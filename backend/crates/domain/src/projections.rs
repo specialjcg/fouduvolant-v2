@@ -95,6 +95,7 @@ impl MatchProjection {
                         points_a: 0,
                         points_b: 0,
                         sets: Vec::new(),
+                        conceded: false,
                     },
                 );
             }
@@ -128,6 +129,17 @@ impl MatchProjection {
                     v.winner = Some(*winner);
                     v.done_order = Some(self.next_done);
                     self.next_done += 1;
+                }
+            }
+            MatchEvent::Conceded { winner } => {
+                if let Some(v) = self.views.get_mut(&id) {
+                    v.status = SchedStatus::Done;
+                    v.winner = Some(*winner);
+                    v.conceded = true;
+                    if v.done_order.is_none() {
+                        v.done_order = Some(self.next_done);
+                        self.next_done += 1;
+                    }
                 }
             }
             MatchEvent::Rescored { set, winner } => {
