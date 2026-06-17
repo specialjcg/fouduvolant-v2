@@ -1455,32 +1455,32 @@ bracketTree title nodes =
 
 brkCell : Float
 brkCell =
-    54
+    72
 
 
 brkBoxW : Float
 brkBoxW =
-    168
+    186
 
 
 brkBoxH : Float
 brkBoxH =
-    44
+    50
 
 
 brkBarH : Float
 brkBarH =
-    40
+    50
 
 
 brkColGap : Float
 brkColGap =
-    78
+    104
 
 
 brkTopPad : Float
 brkTopPad =
-    34
+    42
 
 
 px : Float -> String
@@ -1580,14 +1580,19 @@ seedRow team winner =
     in
     div
         [ class
-            (if isWin then
-                "seed win"
+            (case team of
+                Just _ ->
+                    if isWin then
+                        "seed win"
 
-             else
-                "seed"
+                    else
+                        "seed"
+
+                Nothing ->
+                    "seed empty"
             )
         ]
-        [ span [ class "nm" ] [ text (Maybe.withDefault "—" team) ] ]
+        [ span [ class "nm" ] [ text (Maybe.withDefault "" team) ] ]
 
 
 viewStandings : Sel -> Html Msg

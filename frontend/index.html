@@ -209,9 +209,10 @@
       border:1px solid #34343c; border-radius:var(--r-md); overflow:hidden; z-index:2;
     }
     .finals .seed {
-      display:flex; align-items:center; padding:.28rem .5rem;
-      font-size:.82rem; color:#d6d6de;
+      display:flex; align-items:center; padding:.3rem .55rem;
+      font-size:.84rem; color:#d6d6de; min-height:1.65rem;
     }
+    .finals .seed.empty { background:repeating-linear-gradient(90deg,transparent 0 6px,rgba(255,255,255,.015) 6px 12px); }
     .finals .seed + .seed { border-top:1px solid #34343c; }
     .finals .seed.win { color:#f4d98a; font-weight:700; background:rgba(244,217,138,.08); }
     .finals .seed .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
