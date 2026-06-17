@@ -554,6 +554,7 @@ impl App {
                 TournamentEvent::PoolPhaseStarted => view.phase = Phase::PoolPhase,
                 TournamentEvent::BracketPhaseStarted => view.phase = Phase::BracketPhase,
                 TournamentEvent::DraftReopened => view.phase = Phase::Draft,
+                TournamentEvent::BracketFormatSet { format } => view.bracket_format = format,
             }
         }
         Ok(Some(view))

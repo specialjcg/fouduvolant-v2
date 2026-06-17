@@ -106,6 +106,12 @@ pub enum TournamentCommand {
     StartBracketPhase,
     /// Reopen the draft (after a reset) to allow editing teams/pools again.
     ReopenDraft,
+    /// Change the bracket (finals) match format — e.g. switch finals between a
+    /// single set and best-of-3. Takes effect on the next bracket draw.
+    SetBracketFormat {
+        /// New format for bracket matches.
+        format: MatchFormat,
+    },
 }
 
 /// Events emitted by the [`Tournament`] aggregate.
@@ -161,6 +167,11 @@ pub enum TournamentEvent {
     BracketPhaseStarted,
     /// The tournament was reset to draft.
     DraftReopened,
+    /// The bracket match format was changed.
+    BracketFormatSet {
+        /// New format for bracket matches.
+        format: MatchFormat,
+    },
 }
 
 impl DomainEvent for TournamentEvent {
@@ -175,6 +186,7 @@ impl DomainEvent for TournamentEvent {
             TournamentEvent::PoolPhaseStarted => "PoolPhaseStarted",
             TournamentEvent::BracketPhaseStarted => "BracketPhaseStarted",
             TournamentEvent::DraftReopened => "DraftReopened",
+            TournamentEvent::BracketFormatSet { .. } => "BracketFormatSet",
         }
         .to_string()
     }
@@ -292,6 +304,11 @@ impl Aggregate for Tournament {
                     .await;
             }
 
+            C::SetBracketFormat { format } => {
+                sink.write(TournamentEvent::BracketFormatSet { format }, self)
+                    .await;
+            }
+
             C::ConfigureCourts { courts } => {
                 self.require_draft()?;
                 if courts.is_empty() {
@@ -389,6 +406,9 @@ impl Aggregate for Tournament {
             TournamentEvent::DraftReopened => {
                 self.phase = Phase::Draft;
             }
+            TournamentEvent::BracketFormatSet { format } => {
+                self.bracket_format = format;
+            }
         }
     }
 }
@@ -448,6 +468,25 @@ mod tests {
             bracket_format: MatchFormat::BestOf3,
         });
         t
+    }
+
+    #[tokio::test]
+    async fn set_bracket_format_changes_the_format() {
+        let mut t = created(); // starts BestOf3
+        let events = exec(
+            &mut t,
+            TournamentCommand::SetBracketFormat { format: MatchFormat::BestOf1 },
+        )
+        .await
+        .expect("set format");
+        assert_eq!(
+            events,
+            vec![TournamentEvent::BracketFormatSet { format: MatchFormat::BestOf1 }]
+        );
+        for e in events {
+            t.apply(e);
+        }
+        assert_eq!(t.bracket_format, MatchFormat::BestOf1);
     }
 
     #[tokio::test]

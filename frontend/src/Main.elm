@@ -237,6 +237,8 @@ type Msg
     | GenBracket
     | AdvanceBracket
     | ResetBracket
+    | SetFinalsFormat String
+    | FinalsFormatSaved (Result Http.Error ())
     | SetNewTeamName String
     | SetNewTeam String
     | SetNewTeam2 String
@@ -355,6 +357,17 @@ update msg model =
 
         ResetBracket ->
             withSel model (\s -> ( model, resetBracket model.api s.id ))
+
+        SetFinalsFormat fmt ->
+            withSel model (\s -> ( model, setBracketFormat model.api s.id fmt ))
+
+        FinalsFormatSaved (Ok _) ->
+            -- Re-draw the bracket so the new format applies to its matches.
+            withSel model
+                (\s -> ( model, genBracket model.api s.id (Maybe.withDefault 2 (String.toInt s.perPool)) ))
+
+        FinalsFormatSaved (Err e) ->
+            ( { model | err = Just (httpErr e) }, Cmd.none )
 
         SetNewTeam s ->
             ( mapSel (\s_ -> { s_ | newTeam = s }) model, Cmd.none )
@@ -831,6 +844,15 @@ resetBracket api tid =
         { url = api ++ "/tournaments/" ++ tid ++ "/bracket/reset"
         , body = Http.emptyBody
         , expect = Http.expectWhatever Mutated
+        }
+
+
+setBracketFormat : String -> String -> String -> Cmd Msg
+setBracketFormat api tid fmt =
+    Http.post
+        { url = api ++ "/tournaments/" ++ tid ++ "/bracket-format"
+        , body = Http.jsonBody (E.object [ ( "format", E.string fmt ) ])
+        , expect = Http.expectWhatever FinalsFormatSaved
         }
 
 
@@ -1339,6 +1361,9 @@ viewBracket s =
             , button [ onClick GenBracket ] [ text "Générer" ]
             , button [ class "secondary", onClick AdvanceBracket ] [ text "Avancer" ]
             , button [ class "danger", onClick ResetBracket ] [ text "Réinitialiser le bracket" ]
+            , span [ class "muted", Html.Attributes.style "margin-left" ".5rem" ] [ text "Finales :" ]
+            , button [ class "secondary", onClick (SetFinalsFormat "BestOf1") ] [ text "1 set" ]
+            , button [ class "secondary", onClick (SetFinalsFormat "BestOf3") ] [ text "2 sets gagnants" ]
             ]
         , if List.isEmpty s.bracket then
             p [ class "muted" ] [ text "Bracket non tiré." ]
