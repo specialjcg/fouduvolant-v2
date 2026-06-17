@@ -12,7 +12,10 @@
 pub use cqrs_es::AggregateError;
 use postgres_es::{default_postgress_pool, postgres_snapshot_cqrs, PostgresCqrs};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
+
+pub mod infrastructure;
+use infrastructure::{Db, EventStore};
 
 use domain::bracket::{
     build_bracket, reseed_pool_separation, Bracket, BracketCommand, BracketError, BracketKind,
@@ -189,7 +192,7 @@ const SNAPSHOT_EVERY: usize = 20;
 
 /// Top-level application: one event store, one CQRS framework per aggregate.
 pub struct App {
-    pool: Pool<Postgres>,
+    db: Db,
     tournaments: PostgresCqrs<Tournament>,
     matches: PostgresCqrs<Match>,
     brackets: PostgresCqrs<Bracket>,
@@ -216,7 +219,7 @@ impl App {
         let matches = postgres_snapshot_cqrs(pool.clone(), vec![], SNAPSHOT_EVERY, ());
         let brackets = postgres_snapshot_cqrs(pool.clone(), vec![], SNAPSHOT_EVERY, ());
         Self {
-            pool,
+            db: Db::new(pool),
             tournaments,
             matches,
             brackets,
@@ -228,16 +231,7 @@ impl App {
     /// # Errors
     /// Returns any `sqlx` error from executing the schema statements.
     pub async fn run_migrations(&self) -> Result<(), sqlx::Error> {
-        // The schema file holds multiple statements; `execute` on a raw string
-        // runs them as a single batch.
-        sqlx::raw_sql(MIGRATION_SQL).execute(&self.pool).await?;
-        Ok(())
-    }
-
-    /// Access the underlying pool (e.g. to build read-model repositories).
-    #[must_use]
-    pub fn pool(&self) -> &Pool<Postgres> {
-        &self.pool
+        self.db.run_migrations(MIGRATION_SQL).await
     }
 
     /// Execute a command against a tournament aggregate.
@@ -396,17 +390,8 @@ impl App {
     /// # Errors
     /// Returns [`AppError`] on a database or deserialization failure.
     pub async fn list_tournaments(&self) -> Result<Vec<TournamentSummary>, AppError> {
-        let rows = sqlx::query(
-            "SELECT aggregate_id FROM events \
-             WHERE aggregate_type = 'Tournament' AND event_type = 'TournamentCreated' \
-             ORDER BY global_seq",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
         let mut out = Vec::new();
-        for row in rows {
-            let id_str: String = row.try_get("aggregate_id")?;
+        for id_str in self.db.created_tournament_ids().await? {
             let id = TournamentId(id_str.parse().map_err(AppError::BadId)?);
             if let Some(view) = self.tournament_view(id).await? {
                 out.push(TournamentSummary {
@@ -447,30 +432,8 @@ impl App {
 
     pub async fn reset_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
         let tid = tournament_id.to_string();
-        let match_subquery = "SELECT aggregate_id FROM events \
-             WHERE aggregate_type = 'Match' AND event_type = 'MatchScheduled' \
-             AND payload->'Scheduled'->>'tournament_id' = $1";
-        sqlx::query(&format!(
-            "DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
-        ))
-        .bind(&tid)
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(&format!(
-            "DELETE FROM events WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
-        ))
-        .bind(&tid)
-        .execute(&self.pool)
-        .await?;
-        // Bracket aggregate shares the tournament id.
-        sqlx::query("DELETE FROM events WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
-            .bind(&tid)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
-            .bind(&tid)
-            .execute(&self.pool)
-            .await?;
+        self.db.delete_tournament_matches(&tid).await?;
+        self.db.delete_aggregate("Bracket", &tid).await?;
         self.tournament(tournament_id, TournamentCommand::ReopenDraft)
             .await
             .map_err(|e| AppError::Command(e.to_string()))?;
@@ -484,32 +447,9 @@ impl App {
     /// Returns [`AppError`] on a database failure.
     pub async fn delete_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
         let tid = tournament_id.to_string();
-        // Match aggregate ids belonging to this tournament (via the Scheduled payload).
-        let match_subquery = "SELECT aggregate_id FROM events \
-             WHERE aggregate_type = 'Match' AND event_type = 'MatchScheduled' \
-             AND payload->'Scheduled'->>'tournament_id' = $1";
-        // Snapshots first (their selection depends on the events still existing).
-        sqlx::query(&format!(
-            "DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
-        ))
-        .bind(&tid)
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(&format!(
-            "DELETE FROM events WHERE aggregate_type = 'Match' AND aggregate_id IN ({match_subquery})"
-        ))
-        .bind(&tid)
-        .execute(&self.pool)
-        .await?;
+        self.db.delete_tournament_matches(&tid).await?;
         // Tournament + Bracket aggregates share the tournament id.
-        sqlx::query("DELETE FROM events WHERE aggregate_id = $1")
-            .bind(&tid)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM snapshots WHERE aggregate_id = $1")
-            .bind(&tid)
-            .execute(&self.pool)
-            .await?;
+        self.db.delete_by_id(&tid).await?;
         Ok(())
     }
 
@@ -1081,31 +1021,13 @@ impl App {
 
     /// Hard-delete a single match's event stream.
     async fn delete_match(&self, match_id: MatchId) -> Result<(), AppError> {
-        let id = match_id.to_string();
-        sqlx::query("DELETE FROM events WHERE aggregate_type = 'Match' AND aggregate_id = $1")
-            .bind(&id)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Match' AND aggregate_id = $1")
-            .bind(&id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        self.db.delete_aggregate("Match", &match_id.to_string()).await
     }
 
     /// Hard-delete a tournament's bracket draw so it can be re-seeded. The
     /// Bracket aggregate is keyed by the tournament id.
     async fn delete_bracket(&self, tournament_id: TournamentId) -> Result<(), AppError> {
-        let id = tournament_id.to_string();
-        sqlx::query("DELETE FROM events WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
-            .bind(&id)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM snapshots WHERE aggregate_type = 'Bracket' AND aggregate_id = $1")
-            .bind(&id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        self.db.delete_aggregate("Bracket", &tournament_id.to_string()).await
     }
 
     /// The bracket tree (main + consolation) with team names resolved.
@@ -1155,18 +1077,12 @@ impl App {
         &self,
         tournament_id: TournamentId,
     ) -> Result<Option<(Vec<TeamId>, Vec<TeamId>)>, AppError> {
-        let rows = sqlx::query(
-            "SELECT payload FROM events \
-             WHERE aggregate_type = 'Bracket' AND aggregate_id = $1 \
-             ORDER BY sequence",
-        )
-        .bind(tournament_id.to_string())
-        .fetch_all(&self.pool)
-        .await?;
-
         let mut seeds = None;
-        for row in rows {
-            let payload: serde_json::Value = row.try_get("payload")?;
+        for payload in self
+            .db
+            .events_for("Bracket", &tournament_id.to_string())
+            .await?
+        {
             let domain::bracket::BracketEvent::Drawn {
                 main_seeds,
                 consolation_seeds,
@@ -1181,18 +1097,8 @@ impl App {
         &self,
         id: TournamentId,
     ) -> Result<Vec<TournamentEvent>, AppError> {
-        let rows = sqlx::query(
-            "SELECT payload FROM events \
-             WHERE aggregate_type = 'Tournament' AND aggregate_id = $1 \
-             ORDER BY sequence",
-        )
-        .bind(id.to_string())
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut events = Vec::with_capacity(rows.len());
-        for row in rows {
-            let payload: serde_json::Value = row.try_get("payload")?;
+        let mut events = Vec::new();
+        for payload in self.db.events_for("Tournament", &id.to_string()).await? {
             events.push(serde_json::from_value(payload)?);
         }
         Ok(events)
@@ -1214,18 +1120,9 @@ impl App {
 
     /// Replay all `Match` events in global commit order into a projection.
     async fn match_projection(&self) -> Result<MatchProjection, AppError> {
-        let rows = sqlx::query(
-            "SELECT aggregate_id, payload FROM events \
-             WHERE aggregate_type = 'Match' ORDER BY global_seq",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
         let mut projection = MatchProjection::new();
-        for row in rows {
-            let id_str: String = row.try_get("aggregate_id")?;
+        for (id_str, payload) in self.db.match_events_global().await? {
             let id = MatchId(id_str.parse().map_err(AppError::BadId)?);
-            let payload: serde_json::Value = row.try_get("payload")?;
             let event: MatchEvent = serde_json::from_value(payload)?;
             projection.apply(id, &event);
         }
