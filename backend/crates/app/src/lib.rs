@@ -900,6 +900,27 @@ impl App {
         Ok(())
     }
 
+    /// Reset the whole bracket: drop every finals match (main + consolation) and
+    /// the draw itself, returning to the "not drawn" state so "Générer" can
+    /// re-seed from scratch. Pools and their results are untouched.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a store failure.
+    pub async fn reset_bracket(&self, tournament_id: TournamentId) -> Result<(), AppError> {
+        let finals: Vec<MatchView> = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .filter(|v| v.tournament == tournament_id && v.pool.is_none())
+            .collect();
+        for v in &finals {
+            self.delete_match(v.id).await?;
+        }
+        self.delete_bracket(tournament_id).await?;
+        Ok(())
+    }
+
     /// Reset a single bracket match so it can be replayed: drop its event stream,
     /// then reconcile the bracket. The match is re-created fresh (its two teams
     /// are still known from the upstream results) and any later-round match that

@@ -80,6 +80,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/schedule", get(schedule))
         .route("/tournaments/{id}/bracket", get(get_bracket).post(generate_bracket))
         .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
+        .route("/tournaments/{id}/bracket/reset", post(reset_bracket))
         .route("/matches/{id}/start", post(start_match))
         .route("/matches/{id}/sets", post(record_set))
         .route("/matches/{id}/rescore", post(rescore))
@@ -500,6 +501,14 @@ async fn advance_bracket(
 ) -> Result<Response, ApiError> {
     let created = app.advance_bracket(TournamentId(id)).await?;
     Ok(Json(CreatedResponse { created }).into_response())
+}
+
+async fn reset_bracket(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    app.reset_bracket(TournamentId(id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // ---- Error mapping ----

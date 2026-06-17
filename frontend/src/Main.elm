@@ -236,6 +236,7 @@ type Msg
     | SetPerPool String
     | GenBracket
     | AdvanceBracket
+    | ResetBracket
     | SetNewTeamName String
     | SetNewTeam String
     | SetNewTeam2 String
@@ -351,6 +352,9 @@ update msg model =
 
         AdvanceBracket ->
             withSel model (\s -> ( model, advBracket model.api s.id ))
+
+        ResetBracket ->
+            withSel model (\s -> ( model, resetBracket model.api s.id ))
 
         SetNewTeam s ->
             ( mapSel (\s_ -> { s_ | newTeam = s }) model, Cmd.none )
@@ -812,6 +816,15 @@ advBracket : String -> String -> Cmd Msg
 advBracket api tid =
     Http.post
         { url = api ++ "/tournaments/" ++ tid ++ "/bracket/advance"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever Mutated
+        }
+
+
+resetBracket : String -> String -> Cmd Msg
+resetBracket api tid =
+    Http.post
+        { url = api ++ "/tournaments/" ++ tid ++ "/bracket/reset"
         , body = Http.emptyBody
         , expect = Http.expectWhatever Mutated
         }
@@ -1321,6 +1334,7 @@ viewBracket s =
             , input [ type_ "number", class "score", value s.perPool, onInput SetPerPool ] []
             , button [ onClick GenBracket ] [ text "Générer" ]
             , button [ class "secondary", onClick AdvanceBracket ] [ text "Avancer" ]
+            , button [ class "danger", onClick ResetBracket ] [ text "Réinitialiser le bracket" ]
             ]
         , if List.isEmpty s.bracket then
             p [ class "muted" ] [ text "Bracket non tiré." ]

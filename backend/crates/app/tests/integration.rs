@@ -900,3 +900,71 @@ async fn reset_bracket_match_clears_result_for_replay() {
     .expect("schedule pool");
     assert!(app.reset_bracket_match(pm).await.is_err(), "pool match reset rejected");
 }
+
+/// A full bracket reset drops every finals match and the draw, returning to the
+/// "not drawn" state; pool data is untouched and "Générer" can re-seed.
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn reset_bracket_clears_the_whole_draw() {
+    use domain::bracket::BracketCommand;
+
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "ResetAll".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    let teams = [TeamId::new(), TeamId::new(), TeamId::new(), TeamId::new()];
+    for (i, id) in teams.iter().enumerate() {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: *id,
+                name: format!("T{i}"),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+    app.bracket(
+        t_id,
+        BracketCommand::Draw { main_seeds: teams.to_vec(), consolation_seeds: vec![] },
+    )
+    .await
+    .expect("draw");
+    app.advance_bracket(t_id).await.expect("advance");
+    assert!(!app.bracket_view(t_id).await.expect("view").is_empty(), "bracket drawn");
+
+    app.reset_bracket(t_id).await.expect("reset bracket");
+
+    assert!(app.bracket_view(t_id).await.expect("view").is_empty(), "bracket cleared");
+    let finals = app
+        .board(t_id)
+        .await
+        .expect("board")
+        .matches
+        .iter()
+        .filter(|m| m.pool.is_none())
+        .count();
+    assert_eq!(finals, 0, "no finals matches remain");
+
+    // Re-draw works after a reset.
+    app.bracket(
+        t_id,
+        BracketCommand::Draw { main_seeds: teams.to_vec(), consolation_seeds: vec![] },
+    )
+    .await
+    .expect("redraw after reset");
+}
