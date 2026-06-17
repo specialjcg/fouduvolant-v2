@@ -968,3 +968,94 @@ async fn reset_bracket_clears_the_whole_draw() {
     .await
     .expect("redraw after reset");
 }
+
+/// Per-round bracket format: setting the final (size 2) to best-of-3 makes a
+/// final need two sets — one recorded set leaves it in progress.
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn per_round_format_makes_the_final_best_of_3() {
+    use domain::bracket::BracketCommand;
+
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "RoundFmt".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1, // default 1 set
+        },
+    )
+    .await
+    .expect("create");
+
+    let (a, b) = (TeamId::new(), TeamId::new());
+    for (i, id) in [a, b].iter().enumerate() {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: *id,
+                name: format!("T{i}"),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+    let court = CourtId::new();
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![court] })
+        .await
+        .expect("courts");
+
+    // Final (2 teams) is best-of-3.
+    app.tournament(
+        t_id,
+        TournamentCommand::SetBracketRoundFormat { round_size: 2, format: MatchFormat::BestOf3 },
+    )
+    .await
+    .expect("set round format");
+
+    app.bracket(
+        t_id,
+        BracketCommand::Draw { main_seeds: vec![a, b], consolation_seeds: vec![] },
+    )
+    .await
+    .expect("draw");
+    app.advance_bracket(t_id).await.expect("advance");
+
+    let final_id = {
+        let board = app.board(t_id).await.expect("board");
+        board
+            .matches
+            .iter()
+            .find(|m| m.pool.is_none() && m.status == SchedStatus::Pending)
+            .map(|m| m.id)
+            .expect("final scheduled")
+    };
+    app.match_cmd(final_id, MatchCommand::Start { court_id: court }).await.expect("start");
+    app.record_set(final_id, 21, 0).await.expect("set 1");
+
+    // best-of-3 → one set is not enough; still playing.
+    let still_playing = app
+        .board(t_id)
+        .await
+        .expect("board")
+        .matches
+        .iter()
+        .any(|m| m.id == final_id && m.status == SchedStatus::Playing);
+    assert!(still_playing, "BO3 final still in progress after one set");
+
+    app.record_set(final_id, 21, 0).await.expect("set 2");
+    let done = app
+        .board(t_id)
+        .await
+        .expect("board")
+        .matches
+        .iter()
+        .any(|m| m.id == final_id && m.status == SchedStatus::Done);
+    assert!(done, "BO3 final completes after the second set");
+}

@@ -16,6 +16,7 @@ use sqlx::{Pool, Postgres, Row};
 
 use domain::bracket::{
     build_bracket, reseed_pool_separation, Bracket, BracketCommand, BracketError, BracketKind,
+    BracketNode,
 };
 use domain::generation::round_robin_pairs;
 use domain::ids::{CourtId, MatchId, PoolId, TeamId, TournamentId};
@@ -80,8 +81,10 @@ pub struct TournamentView {
     pub pool_courts: Vec<PoolCourtView>,
     /// Pool match format.
     pub pool_format: MatchFormat,
-    /// Bracket match format.
+    /// Bracket match format (default for rounds without an override).
     pub bracket_format: MatchFormat,
+    /// Per-round bracket format override, keyed by team count (2 = final, …).
+    pub bracket_round_formats: std::collections::HashMap<u16, MatchFormat>,
 }
 
 /// One row of a pool's ranked standings.
@@ -512,6 +515,7 @@ impl App {
             pool_courts: Vec::new(),
             pool_format: MatchFormat::BestOf1,
             bracket_format: MatchFormat::BestOf3,
+            bracket_round_formats: std::collections::HashMap::new(),
         };
         for ev in events {
             match ev {
@@ -555,6 +559,9 @@ impl App {
                 TournamentEvent::BracketPhaseStarted => view.phase = Phase::BracketPhase,
                 TournamentEvent::DraftReopened => view.phase = Phase::Draft,
                 TournamentEvent::BracketFormatSet { format } => view.bracket_format = format,
+                TournamentEvent::BracketRoundFormatSet { round_size, format } => {
+                    view.bracket_round_formats.insert(round_size, format);
+                }
             }
         }
         Ok(Some(view))
@@ -831,7 +838,6 @@ impl App {
         let Some(view) = self.tournament_view(tournament_id).await? else {
             return Ok(Vec::new());
         };
-        let format = view.bracket_format;
 
         let bracket_matches: Vec<MatchView> = self
             .match_projection()
@@ -851,8 +857,33 @@ impl App {
             .map(|v| unordered(v.team_a, v.team_b))
             .collect();
 
+        let tree = build_bracket(&main_seeds, &consolation_seeds, &results);
+        // Largest round number per bracket (final), to convert a round index into
+        // the team count of that round (2 = final, 4 = semis, …).
+        let max_round_of = |kind: BracketKind| {
+            tree.iter()
+                .filter(|n| n.kind == kind && n.round != 0 && n.round != 255)
+                .map(|n| n.round)
+                .max()
+                .unwrap_or(1)
+        };
+        let (max_main, max_cons) =
+            (max_round_of(BracketKind::Main), max_round_of(BracketKind::Consolation));
+        let format_of = |node: &BracketNode| -> MatchFormat {
+            let max_r = if node.kind == BracketKind::Main { max_main } else { max_cons };
+            let size: u16 = match node.round {
+                0 => 1u16 << max_r,                 // barrage feeds the first round
+                255 => 2,                           // 3rd-place plays like a final
+                r => 1u16 << (max_r - r + 1),
+            };
+            view.bracket_round_formats
+                .get(&size)
+                .copied()
+                .unwrap_or(view.bracket_format)
+        };
+
         let mut created = Vec::new();
-        for node in build_bracket(&main_seeds, &consolation_seeds, &results) {
+        for node in &tree {
             if !node.is_playable() {
                 continue;
             }
@@ -869,7 +900,7 @@ impl App {
                 MatchCommand::Schedule {
                     match_id,
                     tournament_id,
-                    format,
+                    format: format_of(node),
                     team_a: a,
                     team_b: b,
                     pool_id: None,

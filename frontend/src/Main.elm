@@ -238,7 +238,9 @@ type Msg
     | AdvanceBracket
     | ResetBracket
     | SetFinalsFormat String
+    | SetRoundFormat Int String
     | FinalsFormatSaved (Result Http.Error ())
+    | BracketResetForRegen (Result Http.Error ())
     | SetNewTeamName String
     | SetNewTeam String
     | SetNewTeam2 String
@@ -361,12 +363,22 @@ update msg model =
         SetFinalsFormat fmt ->
             withSel model (\s -> ( model, setBracketFormat model.api s.id fmt ))
 
+        SetRoundFormat size fmt ->
+            withSel model (\s -> ( model, setBracketRoundFormat model.api s.id size fmt ))
+
         FinalsFormatSaved (Ok _) ->
-            -- Re-draw the bracket so the new format applies to its matches.
+            -- Format changed → wipe the draw then re-generate so every bracket
+            -- match is rescheduled with the new per-round format.
+            withSel model (\s -> ( model, resetForRegen model.api s.id ))
+
+        FinalsFormatSaved (Err e) ->
+            ( { model | err = Just (httpErr e) }, Cmd.none )
+
+        BracketResetForRegen (Ok _) ->
             withSel model
                 (\s -> ( model, genBracket model.api s.id (Maybe.withDefault 2 (String.toInt s.perPool)) ))
 
-        FinalsFormatSaved (Err e) ->
+        BracketResetForRegen (Err e) ->
             ( { model | err = Just (httpErr e) }, Cmd.none )
 
         SetNewTeam s ->
@@ -853,6 +865,24 @@ setBracketFormat api tid fmt =
         { url = api ++ "/tournaments/" ++ tid ++ "/bracket-format"
         , body = Http.jsonBody (E.object [ ( "format", E.string fmt ) ])
         , expect = Http.expectWhatever FinalsFormatSaved
+        }
+
+
+setBracketRoundFormat : String -> String -> Int -> String -> Cmd Msg
+setBracketRoundFormat api tid size fmt =
+    Http.post
+        { url = api ++ "/tournaments/" ++ tid ++ "/bracket-round-format"
+        , body = Http.jsonBody (E.object [ ( "round_size", E.int size ), ( "format", E.string fmt ) ])
+        , expect = Http.expectWhatever FinalsFormatSaved
+        }
+
+
+resetForRegen : String -> String -> Cmd Msg
+resetForRegen api tid =
+    Http.post
+        { url = api ++ "/tournaments/" ++ tid ++ "/bracket/reset"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever BracketResetForRegen
         }
 
 
@@ -1361,7 +1391,7 @@ viewBracket s =
             , button [ onClick GenBracket ] [ text "Générer" ]
             , button [ class "secondary", onClick AdvanceBracket ] [ text "Avancer" ]
             , button [ class "danger", onClick ResetBracket ] [ text "Réinitialiser le bracket" ]
-            , span [ class "muted", Html.Attributes.style "margin-left" ".5rem" ] [ text "Finales :" ]
+            , span [ class "muted", Html.Attributes.style "margin-left" ".5rem" ] [ text "Tout :" ]
             , button [ class "secondary", onClick (SetFinalsFormat "BestOf1") ] [ text "1 set" ]
             , button [ class "secondary", onClick (SetFinalsFormat "BestOf3") ] [ text "2 sets gagnants" ]
             ]
@@ -1370,7 +1400,8 @@ viewBracket s =
 
           else
             div []
-                [ bracketTree "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
+                [ roundFormatBar (List.filter (\n -> n.kind == "Main") s.bracket)
+                , bracketTree "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
                 , bracketTree "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
                 ]
         ]
@@ -1379,6 +1410,58 @@ viewBracket s =
 thirdPlaceRound : Int
 thirdPlaceRound =
     255
+
+
+{-| Per-round format chooser: one "1 set / BO3" pair per round of the main draw,
+labelled by team count (8es, quarts, demi, finale). Applies by size to the
+consolation draw too. -}
+roundFormatBar : List BracketNode -> Html Msg
+roundFormatBar nodes =
+    let
+        maxRound =
+            nodes
+                |> List.filter (\n -> n.round /= 0 && n.round /= thirdPlaceRound)
+                |> List.map .round
+                |> List.maximum
+                |> Maybe.withDefault 1
+
+        sizes =
+            List.range 1 maxRound |> List.map (\r -> 2 ^ (maxRound - r + 1))
+
+        control size =
+            span [ class "row", Html.Attributes.style "gap" "3px", Html.Attributes.style "align-items" "center" ]
+                [ span [ class "muted", Html.Attributes.style "font-size" ".78rem" ] [ text (roundSizeLabel size ++ " :") ]
+                , button [ class "secondary", onClick (SetRoundFormat size "BestOf1") ] [ text "1 set" ]
+                , button [ class "secondary", onClick (SetRoundFormat size "BestOf3") ] [ text "BO3" ]
+                ]
+    in
+    div [ class "row", Html.Attributes.style "flex-wrap" "wrap", Html.Attributes.style "gap" ".7rem", Html.Attributes.style "margin-bottom" ".6rem" ]
+        (span [ class "muted" ] [ text "Format par tour :" ] :: List.map control sizes)
+
+
+roundSizeLabel : Int -> String
+roundSizeLabel size =
+    case size of
+        2 ->
+            "Finale"
+
+        4 ->
+            "Demi-finales"
+
+        8 ->
+            "Quarts"
+
+        16 ->
+            "8es"
+
+        32 ->
+            "16es"
+
+        64 ->
+            "32es"
+
+        n ->
+            "Tour de " ++ String.fromInt n
 
 
 {-| One bracket (main/consolation) as a deterministic positioned tree with

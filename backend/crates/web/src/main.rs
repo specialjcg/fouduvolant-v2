@@ -82,6 +82,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
         .route("/tournaments/{id}/bracket/reset", post(reset_bracket))
         .route("/tournaments/{id}/bracket-format", post(set_bracket_format))
+        .route("/tournaments/{id}/bracket-round-format", post(set_bracket_round_format))
         .route("/matches/{id}/start", post(start_match))
         .route("/matches/{id}/sets", post(record_set))
         .route("/matches/{id}/rescore", post(rescore))
@@ -185,6 +186,12 @@ struct RecordSetBody {
 
 #[derive(Deserialize)]
 struct SetFormatBody {
+    format: MatchFormat,
+}
+
+#[derive(Deserialize)]
+struct SetRoundFormatBody {
+    round_size: u16,
     format: MatchFormat,
 }
 
@@ -525,6 +532,19 @@ async fn set_bracket_format(
     app.tournament(
         TournamentId(id),
         TournamentCommand::SetBracketFormat { format: body.format },
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn set_bracket_round_format(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SetRoundFormatBody>,
+) -> Result<Response, ApiError> {
+    app.tournament(
+        TournamentId(id),
+        TournamentCommand::SetBracketRoundFormat { round_size: body.round_size, format: body.format },
     )
     .await?;
     Ok(StatusCode::NO_CONTENT.into_response())

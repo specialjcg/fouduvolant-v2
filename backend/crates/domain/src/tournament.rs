@@ -51,6 +51,10 @@ pub struct Tournament {
     pool_courts: Vec<(PoolId, CourtId)>,
     pool_format: MatchFormat,
     bracket_format: MatchFormat,
+    /// Per-round bracket format override, keyed by the number of teams in the
+    /// round (2 = final, 4 = semis, 8 = quarters, 16 = round of 16, …). Rounds
+    /// not present fall back to `bracket_format`.
+    bracket_round_formats: std::collections::HashMap<u16, MatchFormat>,
 }
 
 /// Commands accepted by the [`Tournament`] aggregate.
@@ -110,6 +114,14 @@ pub enum TournamentCommand {
     /// single set and best-of-3. Takes effect on the next bracket draw.
     SetBracketFormat {
         /// New format for bracket matches.
+        format: MatchFormat,
+    },
+    /// Set the format for one bracket round, by team count (2 = final, 4 = semis,
+    /// 8 = quarters, …). Takes effect on the next draw.
+    SetBracketRoundFormat {
+        /// Number of teams in the round.
+        round_size: u16,
+        /// Format for that round.
         format: MatchFormat,
     },
 }
@@ -172,6 +184,13 @@ pub enum TournamentEvent {
         /// New format for bracket matches.
         format: MatchFormat,
     },
+    /// The format for one bracket round (by team count) was set.
+    BracketRoundFormatSet {
+        /// Number of teams in the round.
+        round_size: u16,
+        /// Format for that round.
+        format: MatchFormat,
+    },
 }
 
 impl DomainEvent for TournamentEvent {
@@ -187,6 +206,7 @@ impl DomainEvent for TournamentEvent {
             TournamentEvent::BracketPhaseStarted => "BracketPhaseStarted",
             TournamentEvent::DraftReopened => "DraftReopened",
             TournamentEvent::BracketFormatSet { .. } => "BracketFormatSet",
+            TournamentEvent::BracketRoundFormatSet { .. } => "BracketRoundFormatSet",
         }
         .to_string()
     }
@@ -309,6 +329,14 @@ impl Aggregate for Tournament {
                     .await;
             }
 
+            C::SetBracketRoundFormat { round_size, format } => {
+                sink.write(
+                    TournamentEvent::BracketRoundFormatSet { round_size, format },
+                    self,
+                )
+                .await;
+            }
+
             C::ConfigureCourts { courts } => {
                 self.require_draft()?;
                 if courts.is_empty() {
@@ -408,6 +436,9 @@ impl Aggregate for Tournament {
             }
             TournamentEvent::BracketFormatSet { format } => {
                 self.bracket_format = format;
+            }
+            TournamentEvent::BracketRoundFormatSet { round_size, format } => {
+                self.bracket_round_formats.insert(round_size, format);
             }
         }
     }
