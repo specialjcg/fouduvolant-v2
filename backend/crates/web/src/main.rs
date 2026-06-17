@@ -71,6 +71,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/pools/{pool_id}/court", post(assign_pool_court))
         .route("/tournaments/{id}/courts", post(configure_courts))
         .route("/tournaments/{id}/reset", post(reset_tournament))
+        .route("/tournaments/{id}/redo-pools", post(redo_pools))
         .route("/tournaments/{id}/start-pools", post(start_pools))
         .route("/tournaments/{id}/start-bracket", post(start_bracket))
         .route("/tournaments/{id}/matches", post(schedule_match))
@@ -393,6 +394,14 @@ async fn reset_tournament(
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     app.reset_tournament(TournamentId(id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn redo_pools(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    app.redo_pools(TournamentId(id)).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

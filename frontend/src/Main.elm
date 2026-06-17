@@ -269,6 +269,7 @@ type Msg
     | StartPools
     | StartFinals
     | ResetTournament
+    | RedoPools
     | DragStart String
     | DropOn String
     | NoOp
@@ -534,6 +535,14 @@ update msg model =
 
         ResetTournament ->
             withSel model (\s -> ( model, postEmpty model.api ("/tournaments/" ++ s.id ++ "/reset") (E.object []) ))
+
+        RedoPools ->
+            withSel model
+                (\s ->
+                    ( mapSel (\x -> { x | step = StepPools }) model
+                    , postEmpty model.api ("/tournaments/" ++ s.id ++ "/redo-pools") (E.object [])
+                    )
+                )
 
         DragStart teamId ->
             ( mapSel (\s -> { s | dragged = Just teamId }) model, Cmd.none )
@@ -2102,6 +2111,11 @@ viewBoard showPast s names =
         [ div [ class "row" ]
             [ h2 [] [ text "Terrains" ]
             , button [ onClick Dispatch ] [ text "⟳ Dispatch auto" ]
+            , if s.view.phase == "PoolPhase" && not (List.any (\m -> m.pool /= Nothing && m.status == "Done") s.board.matches) then
+                button [ class "danger", onClick RedoPools ] [ text "Refaire les poules" ]
+
+              else
+                text ""
             , button [ class "secondary", onClick ToggleShowPast ]
                 [ text
                     (if showPast then

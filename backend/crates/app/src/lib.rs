@@ -424,6 +424,27 @@ impl App {
     ///
     /// # Errors
     /// Returns [`AppError`] on a database or command failure.
+    /// Redo the pools live after a no-show: only allowed while no pool match has
+    /// been played. Wipes the (unplayed) matches and reopens the draft, keeping
+    /// teams and pools so the absent team can be removed and the pools redrawn.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] if a pool match already has a result, or on failure.
+    pub async fn redo_pools(&self, tournament_id: TournamentId) -> Result<(), AppError> {
+        let played = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .any(|v| v.tournament == tournament_id && v.pool.is_some() && v.winner.is_some());
+        if played {
+            return Err(AppError::Command(
+                "des matchs de poule ont déjà été joués — refaire les poules est impossible".into(),
+            ));
+        }
+        self.reset_tournament(tournament_id).await
+    }
+
     pub async fn reset_tournament(&self, tournament_id: TournamentId) -> Result<(), AppError> {
         let tid = tournament_id.to_string();
         let match_subquery = "SELECT aggregate_id FROM events \
