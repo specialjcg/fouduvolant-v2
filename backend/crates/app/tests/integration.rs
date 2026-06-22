@@ -1365,3 +1365,128 @@ async fn partial_score_is_recorded_and_flagged_irregular() {
     app.start_match(m3, court1).await.expect("m3 starts");
     assert!(app.submit_score(m3, 12, 12).await.is_err(), "a tie is rejected");
 }
+
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn regenerating_pools_keeps_the_forecast_and_board_alive() {
+    // Regression: regenerating pools leaves the old pool→court pins in the event
+    // stream. Those stale pins must not silence the board nor empty the forecast
+    // (the bug that hid every upcoming match behind a dead map).
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    let (a, b, c, d) = (TeamId::new(), TeamId::new(), TeamId::new(), TeamId::new());
+
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Reseed Forecast".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf3,
+        },
+    )
+    .await
+    .expect("create");
+
+    for (id, name) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: id,
+                name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let (court1, court2) = (CourtId::new(), CourtId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::ConfigureCourts {
+            courts: vec![court1, court2],
+        },
+    )
+    .await
+    .expect("courts");
+
+    // First pool generation, pinned to a court.
+    let old_pool = PoolId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![Pool {
+                id: old_pool,
+                name: "P1".into(),
+                teams: vec![a, b, c, d],
+            }],
+        },
+    )
+    .await
+    .expect("pools v1");
+    app.tournament(
+        t_id,
+        TournamentCommand::AssignPoolCourt {
+            pool_id: old_pool,
+            court_id: court1,
+        },
+    )
+    .await
+    .expect("pin old pool");
+
+    // Regenerate: a brand-new pool id. The pin for `old_pool` is now stale.
+    let new_pool = PoolId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![Pool {
+                id: new_pool,
+                name: "P1".into(),
+                teams: vec![a, b, c, d],
+            }],
+        },
+    )
+    .await
+    .expect("pools v2");
+
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pool phase");
+
+    // A pending match in the *current* pool.
+    let m1 = MatchId::new();
+    app.match_cmd(
+        m1,
+        MatchCommand::Schedule {
+            match_id: m1,
+            tournament_id: t_id,
+            format: MatchFormat::BestOf1,
+            team_a: a,
+            team_b: b,
+            pool_id: Some(new_pool),
+        },
+    )
+    .await
+    .expect("schedule m1");
+
+    // Forecast must still list the upcoming match despite the stale pin.
+    let forecast = app.schedule(t_id).await.expect("schedule");
+    let in_forecast = forecast
+        .iter()
+        .flat_map(|c| c.matches.iter())
+        .any(|m| m.id == m1);
+    assert!(in_forecast, "stale pins must not hide upcoming matches");
+
+    // The board must still suggest the match on a free court.
+    let board = app.board(t_id).await.expect("board");
+    let suggested = board
+        .courts
+        .iter()
+        .filter_map(|c| c.next.as_ref())
+        .any(|s| s.match_id == m1);
+    assert!(suggested, "stale pins must not silence the board");
+}
