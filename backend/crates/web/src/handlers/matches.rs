@@ -53,7 +53,9 @@ pub(crate) async fn record_set(
     Path(id): Path<Uuid>,
     Json(body): Json<RecordSetBody>,
 ) -> Result<Response, ApiError> {
-    app.record_set(MatchId(id), body.a, body.b).await?;
+    // Lenient on purpose: a BWF-valid score records normally, a non-BWF one is
+    // stored verbatim as a forced / partial score (flagged irregular).
+    app.submit_score(MatchId(id), body.a, body.b).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -63,7 +65,7 @@ pub(crate) async fn rescore(
     Path(id): Path<Uuid>,
     Json(body): Json<RecordSetBody>,
 ) -> Result<Response, ApiError> {
-    app.rescore_match(MatchId(id), body.a, body.b).await?;
+    app.resubmit_score(MatchId(id), body.a, body.b).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

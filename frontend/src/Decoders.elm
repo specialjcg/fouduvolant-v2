@@ -134,3 +134,4 @@ matchVDec =
         |> andMap (D.field "pool" (D.nullable D.string))
         |> andMap (D.field "sets" (D.list (D.map2 Tuple.pair (D.index 0 D.int) (D.index 1 D.int))))
         |> andMap (D.oneOf [ D.field "conceded" D.bool, D.succeed False ])
+        |> andMap (D.oneOf [ D.field "irregular" D.bool, D.succeed False ])

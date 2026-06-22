@@ -96,6 +96,7 @@ impl MatchProjection {
                         points_b: 0,
                         sets: Vec::new(),
                         conceded: false,
+                        irregular: false,
                     },
                 );
             }
@@ -142,6 +143,31 @@ impl MatchProjection {
                     v.status = SchedStatus::Done;
                     v.winner = Some(*winner);
                     v.conceded = true;
+                    if v.done_order.is_none() {
+                        v.done_order = Some(self.next_done);
+                        self.next_done += 1;
+                    }
+                }
+            }
+            MatchEvent::ScoreForced { a, b, winner } => {
+                // A forced score is decisive and ends the match in one shot.
+                if let Some(p) = self.progress.get_mut(&id) {
+                    let needed = p.format.sets_to_win();
+                    if a > b {
+                        p.wins_a = needed;
+                        p.wins_b = 0;
+                    } else {
+                        p.wins_a = 0;
+                        p.wins_b = needed;
+                    }
+                }
+                if let Some(v) = self.views.get_mut(&id) {
+                    v.points_a = u16::from(*a);
+                    v.points_b = u16::from(*b);
+                    v.sets = vec![(u16::from(*a), u16::from(*b))];
+                    v.status = SchedStatus::Done;
+                    v.winner = Some(*winner);
+                    v.irregular = true;
                     if v.done_order.is_none() {
                         v.done_order = Some(self.next_done);
                         self.next_done += 1;
@@ -274,6 +300,24 @@ mod tests {
         let v = proj.get(id).unwrap();
         assert_eq!(v.status, SchedStatus::Done);
         assert_eq!(v.done_order, Some(0));
+    }
+
+    #[test]
+    fn forced_score_flags_the_view_irregular() {
+        let mut proj = MatchProjection::new();
+        let (id, pool) = (MatchId::new(), PoolId::new());
+        let (a, b) = (TeamId::new(), TeamId::new());
+
+        proj.apply(id, &scheduled(id, pool, a, b));
+        proj.apply(id, &MatchEvent::MatchStarted { court_id: CourtId::new() });
+        proj.apply(id, &MatchEvent::ScoreForced { a: 15, b: 10, winner: a });
+
+        let v = proj.get(id).unwrap();
+        assert_eq!(v.status, SchedStatus::Done);
+        assert!(v.irregular, "non-BWF score flags the view");
+        assert_eq!(v.winner, Some(a));
+        assert_eq!((v.points_a, v.points_b), (15, 10));
+        assert_eq!(v.sets, vec![(15, 10)]);
     }
 
     #[test]

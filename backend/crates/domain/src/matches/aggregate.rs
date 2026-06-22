@@ -165,6 +165,21 @@ impl Aggregate for Match {
                 }
                 sink.write(MatchEvent::Conceded { winner }, self).await;
             }
+
+            MatchCommand::ForceScore { a, b } => {
+                match self.status {
+                    MatchStatus::NotStarted => return Err(MatchError::NotScheduled),
+                    MatchStatus::Scheduled => return Err(MatchError::NotStarted),
+                    MatchStatus::InProgress | MatchStatus::Completed => {}
+                }
+                let winner = match a.cmp(&b) {
+                    std::cmp::Ordering::Greater => self.team_a.expect("started match has team_a"),
+                    std::cmp::Ordering::Less => self.team_b.expect("started match has team_b"),
+                    std::cmp::Ordering::Equal => return Err(MatchError::TiedScore { a, b }),
+                };
+                sink.write(MatchEvent::ScoreForced { a, b, winner }, self)
+                    .await;
+            }
         }
         Ok(())
     }
@@ -207,6 +222,10 @@ impl Aggregate for Match {
                 self.status = MatchStatus::Completed;
             }
             MatchEvent::Conceded { winner } => {
+                self.winner = Some(winner);
+                self.status = MatchStatus::Completed;
+            }
+            MatchEvent::ScoreForced { winner, .. } => {
                 self.winner = Some(winner);
                 self.status = MatchStatus::Completed;
             }

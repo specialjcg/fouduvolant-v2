@@ -48,4 +48,13 @@ pub enum MatchCommand {
         /// The team that wins.
         winner: TeamId,
     },
+    /// Record a non-BWF ("forced" / partial) final score on purpose: the score
+    /// is stored verbatim and the higher side wins. Completes the match and
+    /// flags it irregular. Rejected on a tie (no winner).
+    ForceScore {
+        /// Raw points for side A.
+        a: u8,
+        /// Raw points for side B.
+        b: u8,
+    },
 }

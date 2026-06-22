@@ -47,6 +47,15 @@ pub enum MatchEvent {
         /// The team that wins.
         winner: TeamId,
     },
+    /// A non-BWF ("forced" / partial) final score was recorded on purpose.
+    ScoreForced {
+        /// Raw points for side A.
+        a: u8,
+        /// Raw points for side B.
+        b: u8,
+        /// The side with more points.
+        winner: TeamId,
+    },
 }
 
 impl DomainEvent for MatchEvent {
@@ -59,6 +68,7 @@ impl DomainEvent for MatchEvent {
             MatchEvent::Completed { .. } => "MatchCompleted",
             MatchEvent::Rescored { .. } => "ScoreCorrected",
             MatchEvent::Conceded { .. } => "Conceded",
+            MatchEvent::ScoreForced { .. } => "ScoreForced",
         }
         .to_string()
     }
@@ -92,6 +102,14 @@ pub enum MatchError {
     /// `Concede` naming a team that is not in this match.
     #[error("the conceding winner is not a team of this match")]
     UnknownWinner,
+    /// A forced score with equal points has no winner.
+    #[error("a forced score needs a winner: {a}-{b} is a tie")]
+    TiedScore {
+        /// Points for side A.
+        a: u8,
+        /// Points for side B.
+        b: u8,
+    },
     /// The proposed set score is not a valid finished set.
     #[error(transparent)]
     Score(#[from] ScoreError),

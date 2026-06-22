@@ -145,6 +145,7 @@ type alias MatchV =
     , pool : Maybe String
     , sets : List ( Int, Int )
     , conceded : Bool
+    , irregular : Bool
     }
 
 

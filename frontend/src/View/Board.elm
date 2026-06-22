@@ -182,7 +182,25 @@ doneNode s names m =
         [ nodeHead "Terminé"
         , div [ class "node-teams" ] [ text (matchLabel names m) ]
         , footer
+        , bwfWarning m
         ]
+
+
+{-| In-box warning when a recorded score does not follow the BWF rules. -}
+bwfWarning : MatchV -> Html Msg
+bwfWarning m =
+    if m.irregular then
+        div
+            [ class "muted"
+            , Html.Attributes.style "font-size" ".68rem"
+            , Html.Attributes.style "color" "#c0392b"
+            , Html.Attributes.style "margin-top" ".2rem"
+            , Html.Attributes.title "Score enregistré tel quel, ne suit pas la règle BWF (21, écart de 2, plafond 30)"
+            ]
+            [ text "⚠ Score hors BWF" ]
+
+    else
+        text ""
 
 
 liveNode : Sel -> Dict String String -> MatchV -> Html Msg

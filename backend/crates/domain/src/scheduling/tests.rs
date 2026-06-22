@@ -31,6 +31,7 @@
             points_b: 0,
             sets: Vec::new(),
             conceded: false,
+                        irregular: false,
         }
     }
 
@@ -89,6 +90,7 @@
             points_b: 11,
             sets: vec![(21, 11)],
             conceded: false,
+                        irregular: false,
         };
         let btb = pending_match(1, p, team(10), team(20)); // reuses team 10
         let fresh = pending_match(2, p, team(30), team(31));
@@ -120,6 +122,7 @@
             points_b: 11,
             sets: vec![(21, 11)],
             conceded: false,
+                        irregular: false,
         };
         let only = pending_match(1, p, team(10), team(20));
         let matches = vec![just_done, only.clone()];

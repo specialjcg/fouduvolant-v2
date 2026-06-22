@@ -46,6 +46,9 @@ pub struct MatchView {
     pub sets: Vec<(u16, u16)>,
     /// True when the match was ended by forfeit / retirement.
     pub conceded: bool,
+    /// True when the recorded score does not follow the BWF rules (a forced /
+    /// partial score the operator entered on purpose).
+    pub irregular: bool,
 }
 
 impl MatchView {

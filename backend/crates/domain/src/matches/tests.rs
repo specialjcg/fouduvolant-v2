@@ -178,3 +178,35 @@
         let err = exec(&mut m, MatchCommand::Unstart).await.unwrap_err();
         assert_eq!(err, MatchError::AlreadyCompleted);
     }
+
+    #[tokio::test]
+    async fn force_score_completes_with_the_higher_side_winning() {
+        let (mut m, a, _b) = started(MatchFormat::BestOf1);
+        let events = exec(&mut m, MatchCommand::ForceScore { a: 15, b: 10 })
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![MatchEvent::ScoreForced { a: 15, b: 10, winner: a }]
+        );
+        assert_eq!(m.status, MatchStatus::Completed);
+        assert_eq!(m.winner, Some(a));
+    }
+
+    #[tokio::test]
+    async fn force_score_rejects_a_tie() {
+        let (mut m, _a, _b) = started(MatchFormat::BestOf1);
+        let err = exec(&mut m, MatchCommand::ForceScore { a: 15, b: 15 })
+            .await
+            .unwrap_err();
+        assert_eq!(err, MatchError::TiedScore { a: 15, b: 15 });
+    }
+
+    #[tokio::test]
+    async fn force_score_before_start_is_rejected() {
+        let (mut m, _a, _b) = scheduled(MatchFormat::BestOf1);
+        let err = exec(&mut m, MatchCommand::ForceScore { a: 15, b: 10 })
+            .await
+            .unwrap_err();
+        assert_eq!(err, MatchError::NotStarted);
+    }

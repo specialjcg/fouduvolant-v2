@@ -1248,3 +1248,120 @@ async fn a_team_cannot_be_started_on_two_courts_at_once() {
     let clash = app.start_match(m2, court2).await;
     assert!(clash.is_err(), "a team cannot play two courts simultaneously");
 }
+
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn partial_score_is_recorded_and_flagged_irregular() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    let (a, b, c, d) = (TeamId::new(), TeamId::new(), TeamId::new(), TeamId::new());
+
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Partial Open".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf3,
+        },
+    )
+    .await
+    .expect("create");
+
+    for (id, name) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: id,
+                name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let pool = PoolId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![Pool {
+                id: pool,
+                name: "P1".into(),
+                teams: vec![a, b, c, d],
+            }],
+        },
+    )
+    .await
+    .expect("pools");
+
+    let (court1, court2) = (CourtId::new(), CourtId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::ConfigureCourts {
+            courts: vec![court1, court2],
+        },
+    )
+    .await
+    .expect("courts");
+
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pool phase");
+
+    // m1 gets a partial / non-BWF score, m2 a regular one.
+    let (m1, m2) = (MatchId::new(), MatchId::new());
+    for (id, ta, tb) in [(m1, a, b), (m2, c, d)] {
+        app.match_cmd(
+            id,
+            MatchCommand::Schedule {
+                match_id: id,
+                tournament_id: t_id,
+                format: MatchFormat::BestOf1,
+                team_a: ta,
+                team_b: tb,
+                pool_id: Some(pool),
+            },
+        )
+        .await
+        .expect("schedule");
+    }
+    app.start_match(m1, court1).await.expect("m1 starts");
+    app.start_match(m2, court2).await.expect("m2 starts");
+
+    // 15-10 is not a valid BWF set, but the operator records it on purpose.
+    app.submit_score(m1, 15, 10).await.expect("partial score");
+    // 21-12 is valid: it must NOT be flagged.
+    app.submit_score(m2, 21, 12).await.expect("regular score");
+
+    let board = app.board(t_id).await.expect("board");
+    let v1 = board.matches.iter().find(|m| m.id == m1).expect("m1");
+    assert_eq!(v1.status, SchedStatus::Done, "forced score ends the match");
+    assert!(v1.irregular, "non-BWF score is flagged");
+    assert_eq!(v1.winner, Some(a), "higher side wins");
+    assert_eq!((v1.points_a, v1.points_b), (15, 10));
+
+    let v2 = board.matches.iter().find(|m| m.id == m2).expect("m2");
+    assert!(!v2.irregular, "a valid BWF score is not flagged");
+
+    // A tie cannot be forced.
+    let m3 = MatchId::new();
+    app.match_cmd(
+        m3,
+        MatchCommand::Schedule {
+            match_id: m3,
+            tournament_id: t_id,
+            format: MatchFormat::BestOf1,
+            team_a: a,
+            team_b: c,
+            pool_id: Some(pool),
+        },
+    )
+    .await
+    .expect("schedule m3");
+    app.start_match(m3, court1).await.expect("m3 starts");
+    assert!(app.submit_score(m3, 12, 12).await.is_err(), "a tie is rejected");
+}

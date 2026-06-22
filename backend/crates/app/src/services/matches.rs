@@ -4,6 +4,7 @@
 use domain::ids::{CourtId, MatchId, TeamId, TournamentId};
 use domain::matches::MatchCommand;
 use domain::scheduling::{plan, SchedStatus};
+use domain::score::SetScore;
 use domain::tournament::TournamentCommand;
 
 use crate::{App, AppError};
@@ -194,6 +195,47 @@ impl App {
         }
         if touched_bracket {
             self.advance_bracket(tournament_id).await?;
+        }
+        Ok(())
+    }
+
+    /// Record a live score from the board: a BWF-valid score follows the normal
+    /// set-recording path; an invalid one is stored verbatim as a forced /
+    /// partial score (the match is flagged irregular). A tie is rejected.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a tie, or on a command / store failure.
+    pub async fn submit_score(&self, match_id: MatchId, a: u8, b: u8) -> Result<(), AppError> {
+        if SetScore::new(a, b).is_ok() {
+            self.record_set(match_id, a, b).await
+        } else {
+            self.force_score(match_id, a, b).await
+        }
+    }
+
+    /// Correct a completed/live score: a BWF-valid score is a normal rescore; an
+    /// invalid one is stored verbatim as a forced / partial score.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on a tie, or on a command / store failure.
+    pub async fn resubmit_score(&self, match_id: MatchId, a: u8, b: u8) -> Result<(), AppError> {
+        if SetScore::new(a, b).is_ok() {
+            self.rescore_match(match_id, a, b).await
+        } else {
+            self.force_score(match_id, a, b).await
+        }
+    }
+
+    /// Store a non-BWF score verbatim (higher side wins), then advance the
+    /// bracket if it was a bracket match.
+    async fn force_score(&self, match_id: MatchId, a: u8, b: u8) -> Result<(), AppError> {
+        self.match_cmd(match_id, MatchCommand::ForceScore { a, b })
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+        if let Some(view) = self.match_projection().await?.get(match_id) {
+            if view.pool.is_none() {
+                self.advance_bracket(view.tournament).await?;
+            }
         }
         Ok(())
     }
