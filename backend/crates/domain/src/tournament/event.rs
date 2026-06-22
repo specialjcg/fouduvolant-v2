@@ -30,6 +30,11 @@ pub enum TournamentEvent {
         /// Team that was removed.
         team_id: TeamId,
     },
+    /// A team forfeited (withdrew / no-show) after the draft.
+    TeamForfeited {
+        /// Team that forfeited.
+        team_id: TeamId,
+    },
     /// The pool composition was set.
     PoolsGenerated {
         /// Full set of pools.
@@ -73,6 +78,7 @@ impl DomainEvent for TournamentEvent {
             TournamentEvent::Created { .. } => "TournamentCreated",
             TournamentEvent::TeamRegistered { .. } => "TeamRegistered",
             TournamentEvent::TeamRemoved { .. } => "TeamRemoved",
+            TournamentEvent::TeamForfeited { .. } => "TeamForfeited",
             TournamentEvent::PoolsGenerated { .. } => "PoolsGenerated",
             TournamentEvent::CourtsConfigured { .. } => "CourtsConfigured",
             TournamentEvent::PoolCourtAssigned { .. } => "PoolCourtAssigned",
@@ -105,6 +111,9 @@ pub enum TournamentError {
     /// A referenced team is not registered.
     #[error("unknown team")]
     UnknownTeam,
+    /// A forfeit was requested during draft (remove the team instead).
+    #[error("cannot forfeit a team during draft (remove it instead)")]
+    CannotForfeitInDraft,
     /// Pool composition is invalid.
     #[error("invalid pools: {0}")]
     InvalidPools(&'static str),

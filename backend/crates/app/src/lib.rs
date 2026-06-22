@@ -49,6 +49,8 @@ pub struct TeamView {
     pub player1: String,
     /// Second player.
     pub player2: String,
+    /// Team forfeited (withdrew / no-show) after the draft.
+    pub forfeited: bool,
 }
 
 /// A pool pinned to a court (manual scheduling).
@@ -290,10 +292,16 @@ impl App {
                         name,
                         player1,
                         player2,
+                        forfeited: false,
                     });
                 }
                 TournamentEvent::TeamRemoved { team_id } => {
                     view.teams.retain(|t| t.id != team_id);
+                }
+                TournamentEvent::TeamForfeited { team_id } => {
+                    if let Some(t) = view.teams.iter_mut().find(|t| t.id == team_id) {
+                        t.forfeited = true;
+                    }
                 }
                 TournamentEvent::PoolsGenerated { pools } => view.pools = pools,
                 TournamentEvent::CourtsConfigured { courts } => view.courts = courts,

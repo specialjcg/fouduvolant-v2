@@ -149,6 +149,11 @@ resetForRegen api tid =
         }
 
 
+forfeitTeam : String -> String -> String -> Cmd Msg
+forfeitTeam api tid teamId =
+    postEmpty api ("/tournaments/" ++ tid ++ "/teams/" ++ teamId ++ "/forfeit") (E.object [])
+
+
 deleteTeam : String -> String -> String -> Cmd Msg
 deleteTeam api tid teamId =
     Http.request

@@ -33,6 +33,8 @@ pub struct Tournament {
     pub(super) phase: Phase,
     name: String,
     teams: Vec<TeamId>,
+    /// Teams that forfeited after the draft (kept in `teams`; badged out).
+    forfeited: Vec<TeamId>,
     pools: Vec<Pool>,
     courts: Vec<CourtId>,
     pool_courts: Vec<(PoolId, CourtId)>,
@@ -111,6 +113,20 @@ impl Aggregate for Tournament {
                 }
                 sink.write(TournamentEvent::TeamRemoved { team_id }, self)
                     .await;
+            }
+
+            C::ForfeitTeam { team_id } => {
+                if self.phase == Phase::Draft {
+                    return Err(E::CannotForfeitInDraft);
+                }
+                if !self.teams.contains(&team_id) {
+                    return Err(E::UnknownTeam);
+                }
+                // Idempotent: a second forfeit is a no-op.
+                if !self.forfeited.contains(&team_id) {
+                    sink.write(TournamentEvent::TeamForfeited { team_id }, self)
+                        .await;
+                }
             }
 
             C::GeneratePools { pools } => {
@@ -210,6 +226,11 @@ impl Aggregate for Tournament {
             }
             TournamentEvent::TeamRemoved { team_id } => {
                 self.teams.retain(|t| *t != team_id);
+            }
+            TournamentEvent::TeamForfeited { team_id } => {
+                if !self.forfeited.contains(&team_id) {
+                    self.forfeited.push(team_id);
+                }
             }
             TournamentEvent::PoolsGenerated { pools } => {
                 self.pools = pools;

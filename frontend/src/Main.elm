@@ -242,6 +242,16 @@ update msg model =
         DeleteTeam teamId ->
             withSel model (\s -> ( model, deleteTeam model.api s.id teamId ))
 
+        AskForfeit teamId ->
+            ( mapSel (\s -> { s | confirmForfeit = Just teamId }) model, Cmd.none )
+
+        CancelForfeit ->
+            ( mapSel (\s -> { s | confirmForfeit = Nothing }) model, Cmd.none )
+
+        ConfirmForfeit teamId ->
+            withSel model
+                (\s -> ( mapSel (\x -> { x | confirmForfeit = Nothing }) model, forfeitTeam model.api s.id teamId ))
+
         GoStep st ->
             ( mapSel
                 (\s ->
@@ -507,6 +517,7 @@ mergeView wantStep prev v =
             , numPools = String.fromInt (suggestPools (List.length v.teams))
             , editing = Nothing
             , dragged = Nothing
+            , confirmForfeit = Nothing
             }
 
 

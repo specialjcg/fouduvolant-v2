@@ -43,6 +43,7 @@ type alias Sel =
     , numPools : String
     , editing : Maybe String
     , dragged : Maybe String
+    , confirmForfeit : Maybe String
     }
 
 
@@ -79,7 +80,7 @@ type alias Summary =
 
 
 type alias Team =
-    { id : String, name : String, player1 : String, player2 : String }
+    { id : String, name : String, player1 : String, player2 : String, forfeited : Bool }
 
 
 type alias TView =
@@ -175,6 +176,9 @@ type Msg
     | SetImportText String
     | ImportList
     | DeleteTeam String
+    | AskForfeit String
+    | CancelForfeit
+    | ConfirmForfeit String
     | GoStep Step
     | SetNumPools String
     | AutoPools

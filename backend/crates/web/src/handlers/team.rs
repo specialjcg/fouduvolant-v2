@@ -77,4 +77,14 @@ pub(crate) async fn remove_team(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Forfeit a team after the draft: the team withdraws, its pending matches are
+/// conceded to the opponents and the bracket advances.
+pub(crate) async fn forfeit_team(
+    State(app): State<Arc<App>>,
+    Path((id, team_id)): Path<(Uuid, Uuid)>,
+) -> Result<Response, ApiError> {
+    app.forfeit_team(TournamentId(id), TeamId(team_id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 

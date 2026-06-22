@@ -1059,3 +1059,103 @@ async fn per_round_format_makes_the_final_best_of_3() {
         .any(|m| m.id == final_id && m.status == SchedStatus::Done);
     assert!(done, "BO3 final completes after the second set");
 }
+
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn forfeit_team_concedes_pending_matches_and_badges_the_team() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    let (a, b) = (TeamId::new(), TeamId::new());
+
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Forfeit Open".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf3,
+        },
+    )
+    .await
+    .expect("create");
+
+    for (id, name) in [(a, "A"), (b, "B")] {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: id,
+                name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let pool = PoolId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![Pool {
+                id: pool,
+                name: "P1".into(),
+                teams: vec![a, b],
+            }],
+        },
+    )
+    .await
+    .expect("pools");
+
+    app.tournament(
+        t_id,
+        TournamentCommand::ConfigureCourts {
+            courts: vec![CourtId::new()],
+        },
+    )
+    .await
+    .expect("courts");
+
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pool phase");
+
+    // A pending pool match A vs B.
+    let m_id = MatchId::new();
+    app.match_cmd(
+        m_id,
+        MatchCommand::Schedule {
+            match_id: m_id,
+            tournament_id: t_id,
+            format: MatchFormat::BestOf1,
+            team_a: a,
+            team_b: b,
+            pool_id: Some(pool),
+        },
+    )
+    .await
+    .expect("schedule");
+
+    // Team A forfeits: its pending match is conceded to B, A is badged.
+    app.forfeit_team(t_id, a).await.expect("forfeit");
+
+    let board = app.board(t_id).await.expect("board");
+    let m = board
+        .matches
+        .iter()
+        .find(|m| m.id == m_id)
+        .expect("match present");
+    assert_eq!(m.status, SchedStatus::Done, "conceded match is done");
+
+    let view = app
+        .tournament_view(t_id)
+        .await
+        .expect("view")
+        .expect("exists");
+    let team_a = view.teams.iter().find(|t| t.id == a).expect("team A");
+    assert!(team_a.forfeited, "forfeited team is badged");
+    let team_b = view.teams.iter().find(|t| t.id == b).expect("team B");
+    assert!(!team_b.forfeited, "opponent is not badged");
+}

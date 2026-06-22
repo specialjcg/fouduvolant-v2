@@ -4,6 +4,7 @@
 use domain::ids::{CourtId, MatchId, TeamId, TournamentId};
 use domain::matches::MatchCommand;
 use domain::scheduling::{plan, SchedStatus};
+use domain::tournament::TournamentCommand;
 
 use crate::{App, AppError};
 
@@ -96,6 +97,57 @@ impl App {
             if view.pool.is_none() {
                 self.advance_bracket(view.tournament).await?;
             }
+        }
+        Ok(())
+    }
+
+    /// Forfeit (withdraw) a whole team after the draft: record the forfeit badge
+    /// on the tournament, then concede every not-yet-finished match the team is
+    /// in (the opponent wins, keeping any sets already played) and advance the
+    /// bracket so the draw moves on.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] if the tournament is still in draft, the team is
+    /// unknown, or on a command / store failure.
+    pub async fn forfeit_team(
+        &self,
+        tournament_id: TournamentId,
+        team_id: TeamId,
+    ) -> Result<(), AppError> {
+        // Record the badge first — this validates phase + team membership.
+        self.tournament(tournament_id, TournamentCommand::ForfeitTeam { team_id })
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))?;
+
+        // Concede each pending / in-progress match the team is part of.
+        let to_concede: Vec<_> = self
+            .match_projection()
+            .await?
+            .views()
+            .into_iter()
+            .filter(|v| {
+                v.tournament == tournament_id
+                    && v.status != SchedStatus::Done
+                    && (v.team_a == team_id || v.team_b == team_id)
+            })
+            .collect();
+
+        let mut touched_bracket = false;
+        for v in to_concede {
+            let winner = if v.team_a == team_id {
+                v.team_b
+            } else {
+                v.team_a
+            };
+            self.match_cmd(v.id, MatchCommand::Concede { winner })
+                .await
+                .map_err(|e| AppError::Command(e.to_string()))?;
+            if v.pool.is_none() {
+                touched_bracket = true;
+            }
+        }
+        if touched_bracket {
+            self.advance_bracket(tournament_id).await?;
         }
         Ok(())
     }

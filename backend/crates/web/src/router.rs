@@ -32,6 +32,7 @@ pub(crate) fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/teams", post(register_team))
         .route("/tournaments/{id}/teams/import", post(import_teams))
         .route("/tournaments/{id}/teams/{team_id}", axum::routing::delete(remove_team))
+        .route("/tournaments/{id}/teams/{team_id}/forfeit", post(forfeit_team))
         .route("/tournaments/{id}/pools", post(generate_pools))
         .route("/tournaments/{id}/pools/{pool_id}/matches", post(generate_pool_matches))
         .route("/tournaments/{id}/pools/{pool_id}/court", post(assign_pool_court))

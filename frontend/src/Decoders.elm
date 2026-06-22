@@ -12,11 +12,12 @@ summaryDec =
 
 teamDec : D.Decoder Team
 teamDec =
-    D.map4 Team
+    D.map5 Team
         (D.field "id" D.string)
         (D.field "name" D.string)
         (D.field "player1" D.string)
         (D.field "player2" D.string)
+        (D.oneOf [ D.field "forfeited" D.bool, D.succeed False ])
 
 
 tviewDec : D.Decoder TView

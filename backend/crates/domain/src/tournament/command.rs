@@ -30,6 +30,12 @@ pub enum TournamentCommand {
         /// Team to remove.
         team_id: TeamId,
     },
+    /// Declare a team forfeited (withdrawn / no-show) after the draft. Records
+    /// the forfeit badge; an application service concedes the team's matches.
+    ForfeitTeam {
+        /// Team that forfeits.
+        team_id: TeamId,
+    },
     /// Replace the pool composition (computed by an application service).
     GeneratePools {
         /// Full set of pools.
