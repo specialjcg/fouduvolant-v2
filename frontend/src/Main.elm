@@ -477,6 +477,9 @@ update msg model =
         ConcedeMatch matchId winnerId ->
             ( model, concedeMatch model.api matchId winnerId )
 
+        UnstartMatch matchId ->
+            ( model, unstartMatch model.api matchId )
+
         ToggleForfeit matchId ->
             ( mapSel
                 (\s ->

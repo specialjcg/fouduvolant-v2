@@ -105,6 +105,12 @@ impl MatchProjection {
                     v.court = Some(*court_id);
                 }
             }
+            MatchEvent::MatchUnstarted => {
+                if let Some(v) = self.views.get_mut(&id) {
+                    v.status = SchedStatus::Pending;
+                    v.court = None;
+                }
+            }
             MatchEvent::SetRecorded { set } => {
                 // Drop any set a decided match should never have received — a
                 // malformed/legacy stream would otherwise sum points (21+21=42).
@@ -268,6 +274,22 @@ mod tests {
         let v = proj.get(id).unwrap();
         assert_eq!(v.status, SchedStatus::Done);
         assert_eq!(v.done_order, Some(0));
+    }
+
+    #[test]
+    fn unstart_releases_the_court_and_requeues() {
+        let mut proj = MatchProjection::new();
+        let (id, pool) = (MatchId::new(), PoolId::new());
+        let (a, b) = (TeamId::new(), TeamId::new());
+        let court = CourtId::new();
+
+        proj.apply(id, &scheduled(id, pool, a, b));
+        proj.apply(id, &MatchEvent::MatchStarted { court_id: court });
+        proj.apply(id, &MatchEvent::MatchUnstarted);
+
+        let v = proj.get(id).unwrap();
+        assert_eq!(v.status, SchedStatus::Pending, "back in the queue");
+        assert_eq!(v.court, None, "court released");
     }
 
     #[test]

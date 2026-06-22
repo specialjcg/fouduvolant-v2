@@ -153,3 +153,28 @@
             .unwrap_err();
         assert_eq!(err, MatchError::AlreadyCompleted);
     }
+
+    #[tokio::test]
+    async fn unstart_returns_a_live_match_to_scheduled() {
+        let (mut m, _a, _b) = started(MatchFormat::BestOf1);
+        let events = exec(&mut m, MatchCommand::Unstart).await.unwrap();
+        assert_eq!(events, vec![MatchEvent::MatchUnstarted]);
+        assert_eq!(m.status, MatchStatus::Scheduled);
+    }
+
+    #[tokio::test]
+    async fn unstart_before_start_is_rejected() {
+        let (mut m, _a, _b) = scheduled(MatchFormat::BestOf1);
+        let err = exec(&mut m, MatchCommand::Unstart).await.unwrap_err();
+        assert_eq!(err, MatchError::NotStarted);
+    }
+
+    #[tokio::test]
+    async fn unstart_a_completed_match_is_rejected() {
+        let (mut m, _a, _b) = started(MatchFormat::BestOf1);
+        exec(&mut m, MatchCommand::RecordSet { a: 21, b: 0 })
+            .await
+            .unwrap();
+        let err = exec(&mut m, MatchCommand::Unstart).await.unwrap_err();
+        assert_eq!(err, MatchError::AlreadyCompleted);
+    }

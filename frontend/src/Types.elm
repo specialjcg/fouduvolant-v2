@@ -209,6 +209,7 @@ type Msg
     | ResetMatch String
     | ConcedeMatch String String
     | ToggleForfeit String
+    | UnstartMatch String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
     | GotZone Time.Zone

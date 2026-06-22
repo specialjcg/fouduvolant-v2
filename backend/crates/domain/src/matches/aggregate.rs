@@ -94,6 +94,15 @@ impl Aggregate for Match {
                 }
             },
 
+            MatchCommand::Unstart => match self.status {
+                MatchStatus::NotStarted => return Err(MatchError::NotScheduled),
+                MatchStatus::Scheduled => return Err(MatchError::NotStarted),
+                MatchStatus::Completed => return Err(MatchError::AlreadyCompleted),
+                MatchStatus::InProgress => {
+                    sink.write(MatchEvent::MatchUnstarted, self).await;
+                }
+            },
+
             MatchCommand::RecordSet { a, b } => {
                 match self.status {
                     MatchStatus::NotStarted => return Err(MatchError::NotScheduled),
@@ -180,6 +189,10 @@ impl Aggregate for Match {
             MatchEvent::MatchStarted { court_id } => {
                 self.status = MatchStatus::InProgress;
                 self.court = Some(court_id);
+            }
+            MatchEvent::MatchUnstarted => {
+                self.status = MatchStatus::Scheduled;
+                self.court = None;
             }
             MatchEvent::SetRecorded { set } => {
                 self.sets.push(set);

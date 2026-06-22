@@ -198,6 +198,14 @@ liveNode s names m =
                 [ text ("Sets : " ++ setsLabel m) ]
         , scoreEntry s m.id
         , forfeitArea s names m
+        , div [ class "forfeit-trigger" ]
+            [ button
+                [ class "secondary forfeit-mini"
+                , Html.Attributes.title "Annuler le démarrage : remet le match à jouer et libère le terrain"
+                , onClick (UnstartMatch m.id)
+                ]
+                [ text "↺ Annuler" ]
+            ]
         ]
 
 

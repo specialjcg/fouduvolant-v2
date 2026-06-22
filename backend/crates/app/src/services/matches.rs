@@ -45,6 +45,17 @@ impl App {
             .map_err(|e| AppError::Command(e.to_string()))
     }
 
+    /// Undo a mistaken start: a live match goes back to the pending queue and
+    /// releases its court (e.g. it was dispatched onto a team already playing).
+    ///
+    /// # Errors
+    /// Returns [`AppError`] if the match is not in progress, or on a store failure.
+    pub async fn unstart_match(&self, match_id: MatchId) -> Result<(), AppError> {
+        self.match_cmd(match_id, MatchCommand::Unstart)
+            .await
+            .map_err(|e| AppError::Command(e.to_string()))
+    }
+
     /// Scheduling process manager (pull-based): plan this tournament's courts and
     /// start the suggested next match on every free court. Forced back-to-back
     /// suggestions are left for manual confirmation.

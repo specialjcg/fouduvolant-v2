@@ -77,6 +77,15 @@ pub(crate) async fn reset_match(
 }
 
 
+pub(crate) async fn unstart_match(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    app.unstart_match(MatchId(id)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+
 pub(crate) async fn concede_match(
     State(app): State<Arc<App>>,
     Path(id): Path<Uuid>,

@@ -23,6 +23,9 @@ pub enum MatchCommand {
         /// Court the match is played on.
         court_id: CourtId,
     },
+    /// Undo a `Start`: a live match that was started by mistake goes back to
+    /// scheduled and releases its court. Only valid while in progress.
+    Unstart,
     /// Record one finished set, by raw points. The aggregate validates the
     /// badminton rules and auto-completes the match when decided.
     RecordSet {

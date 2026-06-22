@@ -244,6 +244,11 @@ concedeMatch api matchId winnerId =
     postEmpty api ("/matches/" ++ matchId ++ "/concede") (E.object [ ( "winner", E.string winnerId ) ])
 
 
+unstartMatch : String -> String -> Cmd Msg
+unstartMatch api matchId =
+    postEmpty api ("/matches/" ++ matchId ++ "/unstart") (E.object [])
+
+
 dispatch : String -> String -> Cmd Msg
 dispatch api tid =
     Http.post

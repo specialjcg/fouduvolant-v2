@@ -55,6 +55,7 @@ pub(crate) fn router(app: Arc<App>) -> Router {
         .route("/matches/{id}/sets", post(record_set))
         .route("/matches/{id}/rescore", post(rescore))
         .route("/matches/{id}/reset", post(reset_match))
+        .route("/matches/{id}/unstart", post(unstart_match))
         .route("/matches/{id}/concede", post(concede_match))
         // Serve the built frontend (index.html, elm.js) for any non-API path.
         .fallback_service(ServeDir::new(static_dir()))

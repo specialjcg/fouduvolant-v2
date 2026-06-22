@@ -23,6 +23,8 @@ pub enum MatchEvent {
         /// Court the match is played on.
         court_id: CourtId,
     },
+    /// A mistaken start was undone: the match returns to scheduled, court freed.
+    MatchUnstarted,
     /// A finished set was recorded.
     SetRecorded {
         /// The validated set score.
@@ -52,6 +54,7 @@ impl DomainEvent for MatchEvent {
         match self {
             MatchEvent::Scheduled { .. } => "MatchScheduled",
             MatchEvent::MatchStarted { .. } => "MatchStarted",
+            MatchEvent::MatchUnstarted => "MatchUnstarted",
             MatchEvent::SetRecorded { .. } => "SetRecorded",
             MatchEvent::Completed { .. } => "MatchCompleted",
             MatchEvent::Rescored { .. } => "ScoreCorrected",
