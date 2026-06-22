@@ -198,6 +198,86 @@
     }
 
     #[tokio::test]
+    async fn regenerating_pools_drops_stale_pins() {
+        let mut t = created();
+        let (a, b) = (TeamId::new(), TeamId::new());
+        for id in [a, b] {
+            exec(
+                &mut t,
+                TournamentCommand::RegisterTeam {
+                    team_id: id,
+                    name: "T".into(),
+                    player1: String::new(),
+                    player2: String::new(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let court = CourtId::new();
+        exec(
+            &mut t,
+            TournamentCommand::ConfigureCourts {
+                courts: vec![court],
+            },
+        )
+        .await
+        .unwrap();
+
+        let old_pool = PoolId::new();
+        for e in exec(
+            &mut t,
+            TournamentCommand::GeneratePools {
+                pools: vec![Pool {
+                    id: old_pool,
+                    name: "P1".into(),
+                    teams: vec![a, b],
+                }],
+            },
+        )
+        .await
+        .unwrap()
+        {
+            t.apply(e);
+        }
+        for e in exec(
+            &mut t,
+            TournamentCommand::AssignPoolCourt {
+                pool_id: old_pool,
+                court_id: court,
+            },
+        )
+        .await
+        .unwrap()
+        {
+            t.apply(e);
+        }
+        assert_eq!(t.pinned_pools(), vec![old_pool], "pin recorded");
+
+        // Regenerate with a brand-new pool id: the old pin must be dropped.
+        let new_pool = PoolId::new();
+        for e in exec(
+            &mut t,
+            TournamentCommand::GeneratePools {
+                pools: vec![Pool {
+                    id: new_pool,
+                    name: "P1".into(),
+                    teams: vec![a, b],
+                }],
+            },
+        )
+        .await
+        .unwrap()
+        {
+            t.apply(e);
+        }
+        assert!(
+            t.pinned_pools().is_empty(),
+            "stale pin removed on regeneration"
+        );
+    }
+
+    #[tokio::test]
     async fn forfeit_in_draft_is_rejected() {
         let mut t = created();
         let a = TeamId::new();

@@ -233,6 +233,11 @@ impl Aggregate for Tournament {
                 }
             }
             TournamentEvent::PoolsGenerated { pools } => {
+                // Regenerating pools drops pins for pools that no longer exist,
+                // so stale pool→court assignments never linger.
+                let ids: std::collections::HashSet<PoolId> =
+                    pools.iter().map(|p| p.id).collect();
+                self.pool_courts.retain(|(p, _)| ids.contains(p));
                 self.pools = pools;
             }
             TournamentEvent::CourtsConfigured { courts } => {
@@ -262,6 +267,11 @@ impl Aggregate for Tournament {
 }
 
 impl Tournament {
+    #[cfg(test)]
+    pub(super) fn pinned_pools(&self) -> Vec<PoolId> {
+        self.pool_courts.iter().map(|(p, _)| *p).collect()
+    }
+
     fn require_draft(&self) -> Result<(), TournamentError> {
         if self.phase == Phase::Draft {
             Ok(())

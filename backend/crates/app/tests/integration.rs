@@ -1489,4 +1489,16 @@ async fn regenerating_pools_keeps_the_forecast_and_board_alive() {
         .filter_map(|c| c.next.as_ref())
         .any(|s| s.match_id == m1);
     assert!(suggested, "stale pins must not silence the board");
+
+    // The stale pin is cleaned up at regeneration: the view exposes no pin for
+    // the dropped pool.
+    let view = app
+        .tournament_view(t_id)
+        .await
+        .expect("view")
+        .expect("exists");
+    assert!(
+        !view.pool_courts.iter().any(|pc| pc.pool == old_pool),
+        "stale pin removed at pool regeneration"
+    );
 }

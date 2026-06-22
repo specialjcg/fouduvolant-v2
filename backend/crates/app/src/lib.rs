@@ -303,7 +303,13 @@ impl App {
                         t.forfeited = true;
                     }
                 }
-                TournamentEvent::PoolsGenerated { pools } => view.pools = pools,
+                TournamentEvent::PoolsGenerated { pools } => {
+                    // Regenerating pools drops pins for pools that no longer exist.
+                    let ids: std::collections::HashSet<_> =
+                        pools.iter().map(|p| p.id).collect();
+                    view.pool_courts.retain(|pc| ids.contains(&pc.pool));
+                    view.pools = pools;
+                }
                 TournamentEvent::CourtsConfigured { courts } => view.courts = courts,
                 TournamentEvent::PoolCourtAssigned { pool_id, court_id } => {
                     view.pool_courts.retain(|pc| pc.pool != pool_id);
@@ -331,8 +337,17 @@ impl App {
     ) -> Result<std::collections::HashMap<PoolId, CourtId>, AppError> {
         let mut map = std::collections::HashMap::new();
         for ev in self.tournament_events(tournament_id).await? {
-            if let TournamentEvent::PoolCourtAssigned { pool_id, court_id } = ev {
-                map.insert(pool_id, court_id);
+            match ev {
+                // Regenerating pools drops pins for pools that no longer exist.
+                TournamentEvent::PoolsGenerated { pools } => {
+                    let ids: std::collections::HashSet<_> =
+                        pools.iter().map(|p| p.id).collect();
+                    map.retain(|p, _| ids.contains(p));
+                }
+                TournamentEvent::PoolCourtAssigned { pool_id, court_id } => {
+                    map.insert(pool_id, court_id);
+                }
+                _ => {}
             }
         }
         Ok(map)
