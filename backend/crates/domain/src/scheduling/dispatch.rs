@@ -341,30 +341,37 @@ pub fn plan(
         })
         .collect();
 
-    let mut pick_slot = |court, preferred: &HashSet<PoolId>, blocked: &HashSet<TeamId>| {
-        pick_for_court(
-            &pending, &taken, court, preferred, blocked, &busy, has_explicit_map, &total,
-            &done, &assigned,
-        )
-        .inspect(|p| {
-            taken.insert(p.match_id);
-            if let Some(pl) = p.pool {
-                *assigned.entry(pl).or_default() += 1;
-            }
-        })
-    };
+    let mut pick_slot =
+        |court, preferred: &HashSet<PoolId>, soft: &HashSet<TeamId>, hard: &HashSet<TeamId>| {
+            pick_for_court(
+                &pending, &taken, court, preferred, soft, hard, has_explicit_map, &total, &done,
+                &assigned,
+            )
+            .inspect(|p| {
+                taken.insert(p.match_id);
+                if let Some(pl) = p.pool {
+                    *assigned.entry(pl).or_default() += 1;
+                }
+            })
+        };
 
     // Phase 1 — allocate every court's `next` first, so a court's preview
     // look-ahead can never starve another court's real assignment.
     let mut nexts: Vec<Option<Suggestion>> = Vec::with_capacity(slots.len());
     let mut blocks: Vec<HashSet<TeamId>> = Vec::with_capacity(slots.len());
+    // Teams already allocated as another court's `next` this round. A team cannot
+    // play two matches at once, so these are hard-excluded from later courts.
+    let mut next_teams: HashSet<TeamId> = HashSet::new();
     for slot in &slots {
-        let mut blocked = recent.clone();
+        let mut soft = recent.clone();
+        let mut hard = busy.clone();
+        hard.extend(next_teams.iter().copied());
         let next = if slot.skip {
             None
         } else {
-            pick_slot(slot.court, &slot.preferred, &blocked).map(|p| {
-                blocked.extend(p.teams);
+            pick_slot(slot.court, &slot.preferred, &soft, &hard).map(|p| {
+                soft.extend(p.teams);
+                next_teams.extend(p.teams);
                 Suggestion {
                     match_id: p.match_id,
                     needs_rest: p.needs_rest,
@@ -372,7 +379,7 @@ pub fn plan(
             })
         };
         nexts.push(next);
-        blocks.push(blocked);
+        blocks.push(soft);
     }
 
     // Phase 2 — fill each court's previews (look-ahead) from what remains.
@@ -382,7 +389,7 @@ pub fn plan(
         if !slot.skip {
             let mut blocked = blocks[i].clone();
             for _ in 0..PREVIEW_DEPTH {
-                let Some(p) = pick_slot(slot.court, &slot.preferred, &blocked) else {
+                let Some(p) = pick_slot(slot.court, &slot.preferred, &blocked, &busy) else {
                     break;
                 };
                 blocked.extend(p.teams);

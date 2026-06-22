@@ -189,3 +189,42 @@
         let c2 = plans.iter().find(|p| p.court == court(2)).unwrap();
         assert!(c2.next.is_none());
     }
+
+    #[test]
+    fn a_team_is_never_suggested_on_two_courts_at_once() {
+        // m1 and m2 share team X; m3 is independent. With two free courts, the
+        // two simultaneous `next` picks must never both involve X.
+        let p1 = pool(1);
+        let (x, y, z, w, v) = (team(1), team(2), team(3), team(4), team(5));
+        let m1 = pending_match(0, p1, x, y);
+        let m2 = pending_match(1, p1, x, z);
+        let m3 = pending_match(2, p1, w, v);
+        let matches = vec![m1.clone(), m2.clone(), m3.clone()];
+        let courts = vec![court(1), court(2)];
+        let map = HashMap::new(); // no explicit map: any court serves any match
+
+        let plans = plan(&matches, &courts, &map);
+        let next_ids: Vec<MatchId> = plans
+            .iter()
+            .filter_map(|p| p.next.as_ref().map(|s| s.match_id))
+            .collect();
+
+        // Both free courts get a suggestion (m1 + m3 are conflict-free).
+        assert_eq!(next_ids.len(), 2, "both free courts get a suggestion");
+
+        let teams_of = |id: MatchId| {
+            let m = matches.iter().find(|m| m.id == id).unwrap();
+            [m.team_a, m.team_b]
+        };
+        let a = teams_of(next_ids[0]);
+        let b = teams_of(next_ids[1]);
+        assert!(
+            !a.iter().any(|t| b.contains(t)),
+            "no team plays two courts at once: {a:?} vs {b:?}"
+        );
+        // Concretely: the two X-sharing matches are never started together.
+        assert!(
+            !(next_ids.contains(&m1.id) && next_ids.contains(&m2.id)),
+            "team X is not double-booked"
+        );
+    }

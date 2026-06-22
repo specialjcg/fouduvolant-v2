@@ -1159,3 +1159,92 @@ async fn forfeit_team_concedes_pending_matches_and_badges_the_team() {
     let team_b = view.teams.iter().find(|t| t.id == b).expect("team B");
     assert!(!team_b.forfeited, "opponent is not badged");
 }
+
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn a_team_cannot_be_started_on_two_courts_at_once() {
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    // Team A is shared by both matches; B and C are the opponents.
+    let (a, b, c) = (TeamId::new(), TeamId::new(), TeamId::new());
+
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Clash Open".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf3,
+        },
+    )
+    .await
+    .expect("create");
+
+    for (id, name) in [(a, "A"), (b, "B"), (c, "C")] {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: id,
+                name: name.into(),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+
+    let pool = PoolId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::GeneratePools {
+            pools: vec![Pool {
+                id: pool,
+                name: "P1".into(),
+                teams: vec![a, b, c],
+            }],
+        },
+    )
+    .await
+    .expect("pools");
+
+    let (court1, court2) = (CourtId::new(), CourtId::new());
+    app.tournament(
+        t_id,
+        TournamentCommand::ConfigureCourts {
+            courts: vec![court1, court2],
+        },
+    )
+    .await
+    .expect("courts");
+
+    app.tournament(t_id, TournamentCommand::StartPoolPhase)
+        .await
+        .expect("start pool phase");
+
+    // m1: A vs B, m2: A vs C — both need team A.
+    let (m1, m2) = (MatchId::new(), MatchId::new());
+    for (id, opp) in [(m1, b), (m2, c)] {
+        app.match_cmd(
+            id,
+            MatchCommand::Schedule {
+                match_id: id,
+                tournament_id: t_id,
+                format: MatchFormat::BestOf1,
+                team_a: a,
+                team_b: opp,
+                pool_id: Some(pool),
+            },
+        )
+        .await
+        .expect("schedule");
+    }
+
+    app.start_match(m1, court1).await.expect("m1 starts");
+
+    // A is now on court1; starting m2 (also A) on court2 must be refused.
+    let clash = app.start_match(m2, court2).await;
+    assert!(clash.is_err(), "a team cannot play two courts simultaneously");
+}

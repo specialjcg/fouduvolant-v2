@@ -15,11 +15,30 @@ impl App {
     /// # Errors
     /// Returns [`AppError`] if the court is busy, or on a command/store failure.
     pub async fn start_match(&self, match_id: MatchId, court_id: CourtId) -> Result<(), AppError> {
-        let busy = self.match_projection().await?.views().iter().any(|v| {
-            v.court == Some(court_id) && v.status == SchedStatus::Playing && v.id != match_id
-        });
-        if busy {
+        let projection = self.match_projection().await?;
+        let views = projection.views();
+        if views
+            .iter()
+            .any(|v| v.court == Some(court_id) && v.status == SchedStatus::Playing && v.id != match_id)
+        {
             return Err(AppError::Command("terrain déjà occupé".into()));
+        }
+        // A team cannot play two matches at once: refuse if either side is
+        // already on court in another live match.
+        if let Some(me) = views.iter().find(|v| v.id == match_id) {
+            let busy = views.iter().any(|v| {
+                v.id != match_id
+                    && v.status == SchedStatus::Playing
+                    && (v.team_a == me.team_a
+                        || v.team_a == me.team_b
+                        || v.team_b == me.team_a
+                        || v.team_b == me.team_b)
+            });
+            if busy {
+                return Err(AppError::Command(
+                    "une équipe joue déjà sur un autre terrain".into(),
+                ));
+            }
         }
         self.match_cmd(match_id, MatchCommand::Start { court_id })
             .await
@@ -50,6 +69,14 @@ impl App {
         let map = self.pool_court_map(tournament_id).await?;
         let plans = plan(&views, &courts, &map);
 
+        // Teams already on court; a team must never be started into a second
+        // simultaneous match, even if two plans land on it in the same pass.
+        let mut playing: std::collections::HashSet<TeamId> = views
+            .iter()
+            .filter(|v| v.status == SchedStatus::Playing)
+            .flat_map(|v| [v.team_a, v.team_b])
+            .collect();
+
         let mut started = Vec::new();
         for cp in plans {
             if cp.current.is_some() {
@@ -59,9 +86,17 @@ impl App {
             if next.needs_rest {
                 continue;
             }
+            let Some(nv) = views.iter().find(|v| v.id == next.match_id) else {
+                continue;
+            };
+            if playing.contains(&nv.team_a) || playing.contains(&nv.team_b) {
+                continue;
+            }
             self.match_cmd(next.match_id, MatchCommand::Start { court_id: cp.court })
                 .await
                 .map_err(|e| AppError::Command(e.to_string()))?;
+            playing.insert(nv.team_a);
+            playing.insert(nv.team_b);
             started.push(next.match_id);
         }
         Ok(started)
