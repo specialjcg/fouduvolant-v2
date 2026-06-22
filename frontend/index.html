@@ -103,10 +103,14 @@
     .node .row { gap:.25rem; flex-wrap:nowrap; }
     .node input.score { width:2.6rem; padding:.35rem .2rem; }
 
-    /* forfeit: stacked buttons, full team name readable */
+    /* forfeit: rare action behind a discreet toggle */
+    .forfeit-trigger { margin-top:.4rem; }
+    .node button.forfeit-mini { width:auto; font-size:.66rem; padding:.16rem .5rem; opacity:.6; }
+    .node button.forfeit-mini:hover { opacity:1; }
     .forfeit { display:flex; flex-direction:column; gap:.25rem; margin-top:.4rem; }
     .forfeit-label { font-size:.66rem; }
     .node button.forfeit-btn { font-size:.74rem; padding:.3rem .4rem; white-space:normal; line-height:1.15; }
+    .node button.forfeit-cancel { font-size:.66rem; padding:.2rem .4rem; opacity:.7; }
 
     /* stepper nav */
     .stepper { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:1rem; }

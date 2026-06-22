@@ -77,7 +77,7 @@ viewLane showPast s names idx cp =
         nextNode =
             cp.next
                 |> Maybe.andThen (\sg -> Maybe.map (\m -> ( m, sg )) (findMatch s.board.matches sg.matchId))
-                |> Maybe.map (\( m, sg ) -> suggestNode freeCourts names cp.court m sg)
+                |> Maybe.map (\( m, sg ) -> suggestNode s freeCourts names cp.court m sg)
                 |> maybeList
 
         previewNodes =
@@ -197,23 +197,30 @@ liveNode s names m =
             div [ class "muted", Html.Attributes.style "font-size" ".78rem", Html.Attributes.style "margin-bottom" ".25rem" ]
                 [ text ("Sets : " ++ setsLabel m) ]
         , scoreEntry s m.id
-        , forfeitRow names m
+        , forfeitArea s names m
         ]
 
 
-{-| Forfeit / retirement: two stacked buttons naming the team that *gives up*;
-the other wins. Works before start (no-show) or during play (abandon). -}
-forfeitRow : Dict String String -> MatchV -> Html Msg
-forfeitRow names m =
-    div [ class "forfeit" ]
-        [ span [ class "muted forfeit-label" ] [ text "Forfait — qui abandonne ?" ]
-        , button [ class "secondary forfeit-btn", onClick (ConcedeMatch m.id m.teamB) ] [ text (nameOf names m.teamA) ]
-        , button [ class "secondary forfeit-btn", onClick (ConcedeMatch m.id m.teamA) ] [ text (nameOf names m.teamB) ]
-        ]
+{-| Forfeit is rare, so it stays behind a small toggle. Collapsed: a discreet
+"Forfait" button. Expanded: two stacked buttons naming the team that *gives up*
+(the other wins) plus a cancel. Works before start (no-show) or during play. -}
+forfeitArea : Sel -> Dict String String -> MatchV -> Html Msg
+forfeitArea s names m =
+    if s.forfeitOpen == Just m.id then
+        div [ class "forfeit" ]
+            [ span [ class "muted forfeit-label" ] [ text "Forfait — qui abandonne ?" ]
+            , button [ class "secondary forfeit-btn", onClick (ConcedeMatch m.id m.teamB) ] [ text (nameOf names m.teamA) ]
+            , button [ class "secondary forfeit-btn", onClick (ConcedeMatch m.id m.teamA) ] [ text (nameOf names m.teamB) ]
+            , button [ class "secondary forfeit-cancel", onClick (ToggleForfeit m.id) ] [ text "Annuler" ]
+            ]
+
+    else
+        div [ class "forfeit-trigger" ]
+            [ button [ class "secondary forfeit-mini", onClick (ToggleForfeit m.id) ] [ text "Forfait" ] ]
 
 
-suggestNode : List ( Int, String ) -> Dict String String -> String -> MatchV -> Sugg -> Html Msg
-suggestNode freeCourts names court m sg =
+suggestNode : Sel -> List ( Int, String ) -> Dict String String -> String -> MatchV -> Sugg -> Html Msg
+suggestNode s freeCourts names court m sg =
     div [ class "node suggest" ]
         [ nodeHead
             (if sg.needsRest then
@@ -225,7 +232,7 @@ suggestNode freeCourts names court m sg =
         , div [ class "node-teams" ] [ text (matchLabel names m) ]
         , div [ class "row", Html.Attributes.style "gap" "4px", Html.Attributes.style "flex-wrap" "wrap" ]
             (launchButtons court freeCourts m.id)
-        , forfeitRow names m
+        , forfeitArea s names m
         ]
 
 

@@ -477,6 +477,22 @@ update msg model =
         ConcedeMatch matchId winnerId ->
             ( model, concedeMatch model.api matchId winnerId )
 
+        ToggleForfeit matchId ->
+            ( mapSel
+                (\s ->
+                    { s
+                        | forfeitOpen =
+                            if s.forfeitOpen == Just matchId then
+                                Nothing
+
+                            else
+                                Just matchId
+                    }
+                )
+                model
+            , Cmd.none
+            )
+
         Mutated (Ok _) ->
             ( model, refresh model )
 
@@ -518,6 +534,7 @@ mergeView wantStep prev v =
             , editing = Nothing
             , dragged = Nothing
             , confirmForfeit = Nothing
+            , forfeitOpen = Nothing
             }
 
 
