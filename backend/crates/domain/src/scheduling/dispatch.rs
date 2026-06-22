@@ -200,13 +200,18 @@ pub fn forecast(
     courts: &[CourtId],
     pool_court_map: &HashMap<PoolId, CourtId>,
 ) -> Vec<(CourtId, Vec<MatchId>)> {
-    let owned;
-    let map: &HashMap<PoolId, CourtId> = if pool_court_map.is_empty() {
-        owned = assign_pools_to_courts(matches, courts);
-        &owned
-    } else {
-        pool_court_map
-    };
+    // Greedy base covers every current pool; live pins (for pools that still
+    // exist, on courts that still exist) override it. Stale pins left over from
+    // a previous pool generation are ignored, so upcoming matches are never
+    // dropped from the forecast.
+    let present: HashSet<PoolId> = matches.iter().filter_map(|m| m.pool).collect();
+    let court_set: HashSet<CourtId> = courts.iter().copied().collect();
+    let mut map: HashMap<PoolId, CourtId> = assign_pools_to_courts(matches, courts);
+    for (&p, &c) in pool_court_map {
+        if present.contains(&p) && court_set.contains(&c) {
+            map.insert(p, c);
+        }
+    }
 
     let court_of = |m: &MatchView| -> Option<CourtId> {
         m.court.or_else(|| m.pool.and_then(|p| map.get(&p).copied()))
@@ -242,10 +247,20 @@ pub fn plan(
     courts: &[CourtId],
     pool_court_map: &HashMap<PoolId, CourtId>,
 ) -> Vec<CourtPlan> {
-    let has_explicit_map = !pool_court_map.is_empty();
+    // Only pins for pools and courts that still exist count as an explicit map.
+    // Stale pins (from a previous pool generation) are ignored so courts don't
+    // fall silent under idle-to-rest against a dead map.
+    let present: HashSet<PoolId> = matches.iter().filter_map(|m| m.pool).collect();
+    let court_set: HashSet<CourtId> = courts.iter().copied().collect();
+    let live_pins: HashMap<PoolId, CourtId> = pool_court_map
+        .iter()
+        .filter(|(p, c)| present.contains(p) && court_set.contains(c))
+        .map(|(&p, &c)| (p, c))
+        .collect();
+    let has_explicit_map = !live_pins.is_empty();
     let owned_map;
     let map: &HashMap<PoolId, CourtId> = if has_explicit_map {
-        pool_court_map
+        &live_pins
     } else {
         owned_map = assign_pools_to_courts(matches, courts);
         &owned_map

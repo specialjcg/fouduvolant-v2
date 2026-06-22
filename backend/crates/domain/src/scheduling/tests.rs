@@ -231,3 +231,43 @@
             "team X is not double-booked"
         );
     }
+
+    #[test]
+    fn forecast_includes_pending_when_pins_are_stale() {
+        // Pools were regenerated: the only pin references a pool id that no
+        // longer has matches. The current pool's pending match must still be
+        // forecast (greedy fallback), not dropped.
+        let current = pool(1);
+        let stale = pool(999);
+        let courts = vec![court(1)];
+        let mut map = HashMap::new();
+        map.insert(stale, court(1));
+
+        let m = pending_match(0, current, team(10), team(11));
+        let fc = forecast(&[m.clone()], &courts, &map);
+        let court1 = fc.iter().find(|(c, _)| *c == court(1)).unwrap();
+        assert!(
+            court1.1.contains(&m.id),
+            "pending match is forecast despite a stale pin"
+        );
+    }
+
+    #[test]
+    fn plan_suggests_when_pins_are_stale() {
+        // Same stale-pin situation: a free court must still get a suggestion
+        // instead of being silenced by idle-to-rest on a dead map.
+        let current = pool(1);
+        let stale = pool(999);
+        let courts = vec![court(1)];
+        let mut map = HashMap::new();
+        map.insert(stale, court(1));
+
+        let m = pending_match(0, current, team(10), team(11));
+        let plans = plan(&[m.clone()], &courts, &map);
+        let c1 = plans.iter().find(|p| p.court == court(1)).unwrap();
+        assert_eq!(
+            c1.next.as_ref().map(|s| s.match_id),
+            Some(m.id),
+            "a free court still gets a suggestion"
+        );
+    }
