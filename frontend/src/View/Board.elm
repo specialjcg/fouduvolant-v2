@@ -1,4 +1,4 @@
-module View.Board exposing (viewBoard)
+module View.Board exposing (launchButtons, viewBoard)
 
 import Dict exposing (Dict)
 import Html exposing (..)

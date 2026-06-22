@@ -8,11 +8,22 @@ import Json.Decode as D
 import Time
 import Helpers exposing (..)
 import Types exposing (..)
+import View.Board exposing (launchButtons)
 
 
 {-| Prévisionnel : page dédiée, horaires réels = heure système + ETA cumulée. -}
 viewSchedule : Time.Posix -> Time.Zone -> Sel -> Html Msg
 viewSchedule now zone s =
+    let
+        -- Courts with nobody playing right now (free → can host a match).
+        playingCourts =
+            s.board.matches |> List.filter (\m -> m.status == "Playing") |> List.filterMap .court
+
+        freeCourts =
+            s.view.courts
+                |> List.indexedMap (\i c -> ( i + 1, c ))
+                |> List.filter (\( _, c ) -> not (List.member c playingCourts))
+    in
     div [ class "panel" ]
         [ h2 [] [ text "Prévisionnel" ]
         , p [ class "muted" ]
@@ -21,7 +32,7 @@ viewSchedule now zone s =
             p [ class "muted" ] [ text "Rien à prévoir pour l'instant." ]
 
           else
-            div [] (List.indexedMap (forecastCourtView now zone) s.schedule)
+            div [] (List.indexedMap (forecastCourtView now zone freeCourts) s.schedule)
         ]
 
 
@@ -38,8 +49,17 @@ clockAt zone base etaMin =
     pad (Time.toHour zone p) ++ "h" ++ pad (Time.toMinute zone p)
 
 
-forecastCourtView : Time.Posix -> Time.Zone -> Int -> ForecastCourt -> Html Msg
-forecastCourtView now zone idx fc =
+forecastCourtView : Time.Posix -> Time.Zone -> List ( Int, String ) -> Int -> ForecastCourt -> Html Msg
+forecastCourtView now zone freeCourts idx fc =
+    let
+        -- Only the next two pending matches of this court get launch buttons,
+        -- to keep the timeline readable.
+        launchable =
+            fc.matches
+                |> List.filter (\m -> m.status == "Pending")
+                |> List.take 2
+                |> List.map .id
+    in
     div [ Html.Attributes.style "margin-bottom" ".8rem" ]
         [ h4 [ Html.Attributes.style "margin" ".3rem 0", Html.Attributes.style "color" "var(--primary)" ]
             [ text ("Terrain " ++ String.fromInt (idx + 1)) ]
@@ -49,14 +69,15 @@ forecastCourtView now zone idx fc =
                 , th [] [ text "Poule" ]
                 , th [] [ text "Match" ]
                 , th [] [ text "Score" ]
+                , th [] [ text "Action" ]
                 ]
-                :: List.map (forecastRow now zone) fc.matches
+                :: List.map (forecastRow now zone freeCourts fc.court launchable) fc.matches
             )
         ]
 
 
-forecastRow : Time.Posix -> Time.Zone -> ForecastMatch -> Html Msg
-forecastRow now zone m =
+forecastRow : Time.Posix -> Time.Zone -> List ( Int, String ) -> String -> List String -> ForecastMatch -> Html Msg
+forecastRow now zone freeCourts court launchable m =
     let
         score =
             if m.status == "Done" then
@@ -67,12 +88,21 @@ forecastRow now zone m =
 
             else
                 "—"
+
+        action =
+            if List.member m.id launchable then
+                div [ class "row", Html.Attributes.style "gap" "4px", Html.Attributes.style "flex-wrap" "wrap" ]
+                    (launchButtons court freeCourts m.id)
+
+            else
+                text ""
     in
     tr []
         [ td [] [ text (clockAt zone now m.etaMin) ]
         , td [] [ text (Maybe.withDefault "" m.pool) ]
         , td [] [ text (m.teamA ++ " vs " ++ m.teamB) ]
         , td [] [ text score ]
+        , td [] [ action ]
         ]
 
 
