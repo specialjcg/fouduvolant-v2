@@ -10,7 +10,6 @@ import Helpers exposing (..)
 import Types exposing (..)
 
 
-import View.Common exposing (shortName)
 
 
 viewBoard : Bool -> Sel -> Dict String String -> Html Msg
@@ -202,14 +201,14 @@ liveNode s names m =
         ]
 
 
-{-| Forfeit / retirement: two buttons naming the team that *gives up*; the other
-wins. Works before start (no-show) or during play (abandon). -}
+{-| Forfeit / retirement: two stacked buttons naming the team that *gives up*;
+the other wins. Works before start (no-show) or during play (abandon). -}
 forfeitRow : Dict String String -> MatchV -> Html Msg
 forfeitRow names m =
-    div [ class "row", Html.Attributes.style "gap" "3px", Html.Attributes.style "margin-top" ".25rem" ]
-        [ span [ class "muted", Html.Attributes.style "font-size" ".7rem" ] [ text "Forfait :" ]
-        , button [ class "secondary", onClick (ConcedeMatch m.id m.teamB) ] [ text (shortName (nameOf names m.teamA)) ]
-        , button [ class "secondary", onClick (ConcedeMatch m.id m.teamA) ] [ text (shortName (nameOf names m.teamB)) ]
+    div [ class "forfeit" ]
+        [ span [ class "muted forfeit-label" ] [ text "Forfait — qui abandonne ?" ]
+        , button [ class "secondary forfeit-btn", onClick (ConcedeMatch m.id m.teamB) ] [ text (nameOf names m.teamA) ]
+        , button [ class "secondary forfeit-btn", onClick (ConcedeMatch m.id m.teamA) ] [ text (nameOf names m.teamB) ]
         ]
 
 

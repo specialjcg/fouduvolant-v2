@@ -103,6 +103,11 @@
     .node .row { gap:.25rem; flex-wrap:nowrap; }
     .node input.score { width:2.6rem; padding:.35rem .2rem; }
 
+    /* forfeit: stacked buttons, full team name readable */
+    .forfeit { display:flex; flex-direction:column; gap:.25rem; margin-top:.4rem; }
+    .forfeit-label { font-size:.66rem; }
+    .node button.forfeit-btn { font-size:.74rem; padding:.3rem .4rem; white-space:normal; line-height:1.15; }
+
     /* stepper nav */
     .stepper { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:1rem; }
     button.step { background:var(--surface); color:var(--muted); border:1px solid var(--line);
