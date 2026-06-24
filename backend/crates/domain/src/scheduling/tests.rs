@@ -244,7 +244,7 @@
         map.insert(stale, court(1));
 
         let m = pending_match(0, current, team(10), team(11));
-        let fc = forecast(&[m.clone()], &courts, &map);
+        let fc = forecast(std::slice::from_ref(&m), &courts, &map);
         let court1 = fc.iter().find(|(c, _)| *c == court(1)).unwrap();
         assert!(
             court1.1.contains(&m.id),
@@ -263,7 +263,7 @@
         map.insert(stale, court(1));
 
         let m = pending_match(0, current, team(10), team(11));
-        let plans = plan(&[m.clone()], &courts, &map);
+        let plans = plan(std::slice::from_ref(&m), &courts, &map);
         let c1 = plans.iter().find(|p| p.court == court(1)).unwrap();
         assert_eq!(
             c1.next.as_ref().map(|s| s.match_id),
