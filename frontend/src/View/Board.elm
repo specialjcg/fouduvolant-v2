@@ -345,9 +345,9 @@ bracketControls s names freeCourts m =
               else
                 div [ class "muted", Html.Attributes.style "font-size" ".7rem" ] [ text ("Sets : " ++ setsLabel m) ]
             , scoreEntry s m.id
-            , forfeitArea s names m
-            , div [ class "forfeit-trigger" ]
-                [ button
+            , div [ class "row", Html.Attributes.style "gap" ".25rem", Html.Attributes.style "align-items" "flex-start" ]
+                [ forfeitArea s names m
+                , button
                     [ class "secondary forfeit-mini"
                     , Html.Attributes.title "Annuler le démarrage : remet le match à jouer et libère le terrain"
                     , onClick (UnstartMatch m.id)

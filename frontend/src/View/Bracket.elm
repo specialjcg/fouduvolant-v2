@@ -246,7 +246,7 @@ bracketTree s title nodes =
             -- Drop the petite finale well below the grande finale so a tall
             -- finale box (live controls / launch buttons) never overlaps it.
             thirdBaseY =
-                finaleCy + brkBoxH + 150
+                finaleCy + brkBoxH + 165
 
             thirdEls =
                 thirdNodes
