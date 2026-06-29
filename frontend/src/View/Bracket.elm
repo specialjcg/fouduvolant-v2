@@ -50,8 +50,8 @@ viewBracket s =
           else
             div []
                 [ roundFormatBar s.view.bracketFormat s.view.roundFormats (List.filter (\n -> n.kind == "Main") s.bracket)
-                , bracketTree "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
-                , bracketTree "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
+                , bracketTree s "Principal" (List.filter (\n -> n.kind == "Main") s.bracket)
+                , bracketTree s "Consolante" (List.filter (\n -> n.kind == "Consolation") s.bracket)
                 ]
         ]
 
@@ -128,8 +128,8 @@ roundSizeLabel size =
 connector lines, reproducing the original look. Binary rounds spread evenly over
 the height; barrages spread over their own (denser) count, each connected to the
 round-1 match it feeds. -}
-bracketTree : String -> List BracketNode -> Html Msg
-bracketTree title nodes =
+bracketTree : Sel -> String -> List BracketNode -> Html Msg
+bracketTree s title nodes =
     if List.isEmpty nodes then
         text ""
 
@@ -197,7 +197,7 @@ bracketTree title nodes =
                                     cy r1c (Maybe.withDefault 0 n.feeds)
                             in
                             connector (xOf 0 + brkBoxW) sy (xOf (colOf 1)) ty
-                                ++ [ posBox (xOf 0) sy brkBarH n ]
+                                ++ [ posBox s (xOf 0) sy brkBarH n ]
                         )
                     |> List.concat
 
@@ -217,7 +217,7 @@ bracketTree title nodes =
                                     else
                                         []
                             in
-                            conn ++ [ posBox (xOf (colOf r)) sy brkBoxH n ]
+                            conn ++ [ posBox s (xOf (colOf r)) sy brkBoxH n ]
                         )
                     |> List.concat
 
@@ -249,14 +249,14 @@ bracketTree title nodes =
               else
                 div [ class "brk-third" ]
                     (span [ class "brk-third-label" ] [ text "3e place" ]
-                        :: List.map plainBox thirdNodes
+                        :: List.map (plainBox s) thirdNodes
                     )
             ]
 
 
 brkCell : Float
 brkCell =
-    72
+    96
 
 
 brkBoxW : Float
@@ -299,8 +299,8 @@ titleAt x label =
         [ text label ]
 
 
-posBox : Float -> Float -> Float -> BracketNode -> Html Msg
-posBox x cyc h n =
+posBox : Sel -> Float -> Float -> Float -> BracketNode -> Html Msg
+posBox s x cyc h n =
     div
         [ class "bmatch"
         , Html.Attributes.style "position" "absolute"
@@ -309,13 +309,107 @@ posBox x cyc h n =
         , Html.Attributes.style "width" (px brkBoxW)
         , Html.Attributes.style "min-height" (px h)
         ]
-        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner ]
+        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner, scoreFooter s n ]
 
 
-plainBox : BracketNode -> Html Msg
-plainBox n =
+plainBox : Sel -> BracketNode -> Html Msg
+plainBox s n =
     div [ class "bmatch", Html.Attributes.style "width" (px brkBoxW) ]
-        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner ]
+        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner, scoreFooter s n ]
+
+
+{-| Inline score entry inside a bracket box. A node only carries a `matchId`
+once its pairing is materialized (auto-scheduled by the backend as soon as both
+teams are known). Decided match → recorded score + edit (✎). Materialized but
+undecided → a set-entry row that appends a set, exactly like the board. Reuses
+the board's draft state (`s.scores` / `s.editing`) and messages. -}
+scoreFooter : Sel -> BracketNode -> Html Msg
+scoreFooter s n =
+    case n.matchId of
+        Nothing ->
+            text ""
+
+        Just mid ->
+            if n.winner /= Nothing then
+                brkDone s mid n
+
+            else
+                brkEntry s mid n
+
+
+brkDone : Sel -> String -> BracketNode -> Html Msg
+brkDone s mid n =
+    let
+        ( a, b ) =
+            Maybe.withDefault ( String.fromInt n.pointsA, String.fromInt n.pointsB )
+                (Dict.get mid s.scores)
+    in
+    if s.editing == Just mid then
+        div [ class "row brk-score" ]
+            [ input [ class "score", type_ "number", value a, onInput (SetScore mid 0) ] []
+            , text "-"
+            , input [ class "score", type_ "number", value b, onInput (SetScore mid 1) ] []
+            , button [ onClick (Rescore mid) ] [ text "OK" ]
+            , button [ class "secondary", onClick CancelEdit ] [ text "✕" ]
+            ]
+
+    else
+        div []
+            [ div [ class "row brk-score" ]
+                [ span [ Html.Attributes.style "font-weight" "600" ] [ text (brkSetsLabel n) ]
+                , button [ class "secondary", onClick (EditScore mid n.pointsA n.pointsB) ] [ text "✎" ]
+                ]
+            , brkWarn n
+            ]
+
+
+brkEntry : Sel -> String -> BracketNode -> Html Msg
+brkEntry s mid n =
+    let
+        ( a, b ) =
+            Maybe.withDefault ( "", "" ) (Dict.get mid s.scores)
+    in
+    div []
+        [ if List.isEmpty n.sets then
+            text ""
+
+          else
+            div [ class "muted", Html.Attributes.style "font-size" ".68rem" ]
+                [ text ("Sets : " ++ brkSetsLabel n) ]
+        , div [ class "row brk-score" ]
+            [ input [ class "score", type_ "number", placeholder "0", value a, onInput (SetScore mid 0) ] []
+            , text "-"
+            , input [ class "score", type_ "number", placeholder "0", value b, onInput (SetScore mid 1) ] []
+            , button [ class "secondary", onClick (SubmitScore mid) ] [ text "OK" ]
+            ]
+        , brkWarn n
+        ]
+
+
+brkSetsLabel : BracketNode -> String
+brkSetsLabel n =
+    if List.isEmpty n.sets then
+        String.fromInt n.pointsA ++ "-" ++ String.fromInt n.pointsB
+
+    else
+        n.sets
+            |> List.map (\( a, b ) -> String.fromInt a ++ "-" ++ String.fromInt b)
+            |> String.join "  "
+
+
+brkWarn : BracketNode -> Html Msg
+brkWarn n =
+    if n.irregular then
+        div
+            [ class "muted"
+            , Html.Attributes.style "font-size" ".66rem"
+            , Html.Attributes.style "color" "#c0392b"
+            , Html.Attributes.title "Score enregistré tel quel, ne suit pas la règle BWF (21, écart de 2, plafond 30)"
+            ]
+            [ text "⚠ hors BWF" ]
+
+    else
+        text ""
 
 
 connector : Float -> Float -> Float -> Float -> List (Html Msg)

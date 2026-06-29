@@ -901,6 +901,95 @@ async fn reset_bracket_match_clears_result_for_replay() {
     assert!(app.reset_bracket_match(pm).await.is_err(), "pool match reset rejected");
 }
 
+/// The bracket view carries each materialized node's match id and live score so
+/// the operator can record a score straight in the bracket box (no detour via
+/// the board).
+#[tokio::test]
+#[ignore = "requires a running PostgreSQL (set DATABASE_URL)"]
+async fn bracket_view_carries_match_id_and_live_score() {
+    use domain::bracket::BracketCommand;
+
+    let app = App::connect(&database_url()).await;
+    app.run_migrations().await.expect("migrations");
+
+    let t_id = TournamentId::new();
+    app.tournament(
+        t_id,
+        TournamentCommand::Create {
+            tournament_id: t_id,
+            name: "Inline".into(),
+            pool_format: MatchFormat::BestOf1,
+            bracket_format: MatchFormat::BestOf1,
+        },
+    )
+    .await
+    .expect("create");
+
+    let teams = [TeamId::new(), TeamId::new(), TeamId::new(), TeamId::new()];
+    for (i, id) in teams.iter().enumerate() {
+        app.tournament(
+            t_id,
+            TournamentCommand::RegisterTeam {
+                team_id: *id,
+                name: format!("T{i}"),
+                player1: String::new(),
+                player2: String::new(),
+            },
+        )
+        .await
+        .expect("register");
+    }
+    let court = CourtId::new();
+    app.tournament(t_id, TournamentCommand::ConfigureCourts { courts: vec![court] })
+        .await
+        .expect("courts");
+
+    app.bracket(
+        t_id,
+        BracketCommand::Draw { main_seeds: teams.to_vec(), consolation_seeds: vec![] },
+    )
+    .await
+    .expect("draw");
+    app.advance_bracket(t_id).await.expect("advance");
+
+    // Both semis are materialized: each round-1 node carries a match id and an
+    // empty (0-0, no sets) score.
+    let view = app.bracket_view(t_id).await.expect("view");
+    let semis: Vec<_> = view
+        .iter()
+        .filter(|n| matches!(n.kind, BracketKind::Main) && n.round == 1)
+        .collect();
+    assert_eq!(semis.len(), 2, "two semis drawn");
+    for n in &semis {
+        assert!(n.match_id.is_some(), "semi carries its match id");
+        assert_eq!((n.points_a, n.points_b), (0, 0), "no score yet");
+        assert!(n.sets.is_empty(), "no sets yet");
+    }
+
+    // Score one semi straight from its bracket node id: the same node now shows
+    // the winner and the recorded set.
+    let target = semis
+        .iter()
+        .find_map(|n| n.match_id)
+        .expect("a semi match id");
+    app.match_cmd(target, MatchCommand::Start { court_id: court })
+        .await
+        .expect("start");
+    app.record_set(target, 21, 0).await.expect("record");
+
+    let scored = app
+        .bracket_view(t_id)
+        .await
+        .expect("view")
+        .into_iter()
+        .find(|n| n.match_id == Some(target))
+        .expect("scored node present");
+    assert!(scored.winner.is_some(), "winner shown in the box");
+    assert_eq!(scored.sets, vec![(21, 0)], "recorded set shown in the box");
+    assert_eq!((scored.points_a, scored.points_b), (21, 0), "points shown");
+    assert!(!scored.irregular, "BWF-valid score not flagged");
+}
+
 /// A full bracket reset drops every finals match and the draw, returning to the
 /// "not drawn" state; pool data is untouched and "Générer" can re-seed.
 #[tokio::test]

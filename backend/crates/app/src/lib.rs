@@ -178,6 +178,17 @@ pub struct BracketNodeView {
     pub winner: Option<String>,
     /// For a preliminary (round 0) node: the round-1 match index it feeds.
     pub feeds: Option<u16>,
+    /// The materialized match id once the pairing is scheduled (`None` = bye or
+    /// not yet playable). Lets the bracket box record a score inline.
+    pub match_id: Option<MatchId>,
+    /// Points side A in the materialized match (0 if none).
+    pub points_a: u16,
+    /// Points side B.
+    pub points_b: u16,
+    /// Recorded sets `(a, b)` for the materialized match, in play order.
+    pub sets: Vec<(u16, u16)>,
+    /// True when the recorded score does not follow the BWF rules.
+    pub irregular: bool,
 }
 
 /// Idempotent event-store schema, applied by [`App::run_migrations`].

@@ -65,6 +65,11 @@ type alias BracketNode =
     , teamB : Maybe String
     , winner : Maybe String
     , feeds : Maybe Int
+    , matchId : Maybe String
+    , pointsA : Int
+    , pointsB : Int
+    , sets : List ( Int, Int )
+    , irregular : Bool
     }
 
 

@@ -65,14 +65,19 @@ suggDec =
 
 bracketNodeDec : D.Decoder BracketNode
 bracketNodeDec =
-    D.map7 BracketNode
-        (D.field "kind" D.string)
-        (D.field "round" D.int)
-        (D.field "index" D.int)
-        (D.field "team_a" (D.nullable D.string))
-        (D.field "team_b" (D.nullable D.string))
-        (D.field "winner" (D.nullable D.string))
-        (D.field "feeds" (D.nullable D.int))
+    D.succeed BracketNode
+        |> andMap (D.field "kind" D.string)
+        |> andMap (D.field "round" D.int)
+        |> andMap (D.field "index" D.int)
+        |> andMap (D.field "team_a" (D.nullable D.string))
+        |> andMap (D.field "team_b" (D.nullable D.string))
+        |> andMap (D.field "winner" (D.nullable D.string))
+        |> andMap (D.field "feeds" (D.nullable D.int))
+        |> andMap (D.field "match_id" (D.nullable D.string))
+        |> andMap (D.field "points_a" D.int)
+        |> andMap (D.field "points_b" D.int)
+        |> andMap (D.field "sets" (D.list (D.map2 Tuple.pair (D.index 0 D.int) (D.index 1 D.int))))
+        |> andMap (D.field "irregular" D.bool)
 
 
 forecastCourtDec : D.Decoder ForecastCourt

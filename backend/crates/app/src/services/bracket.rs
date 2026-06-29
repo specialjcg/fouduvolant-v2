@@ -280,25 +280,46 @@ impl App {
             .unwrap_or_default();
         let name = |t: Option<TeamId>| t.and_then(|id| names.get(&id).cloned());
 
-        let results: Vec<(TeamId, TeamId, TeamId)> = self
+        let bracket_matches: Vec<MatchView> = self
             .match_projection()
             .await?
             .views()
             .into_iter()
             .filter(|v| v.tournament == tournament_id && v.pool.is_none())
+            .collect();
+        let unordered = |a: TeamId, b: TeamId| if a <= b { (a, b) } else { (b, a) };
+        let results: Vec<(TeamId, TeamId, TeamId)> = bracket_matches
+            .iter()
             .filter_map(|v| v.winner.map(|w| (v.team_a, v.team_b, w)))
+            .collect();
+        // Index the materialized matches by team pair so each playable node can
+        // carry its match id + live score for inline entry in the bracket box.
+        let by_pair: HashMap<(TeamId, TeamId), &MatchView> = bracket_matches
+            .iter()
+            .map(|v| (unordered(v.team_a, v.team_b), v))
             .collect();
 
         Ok(build_bracket(&main_seeds, &consolation_seeds, &results)
             .into_iter()
-            .map(|n| BracketNodeView {
-                kind: n.kind,
-                round: n.round,
-                index: n.index,
-                team_a: name(n.team_a),
-                team_b: name(n.team_b),
-                winner: name(n.winner),
-                feeds: n.feeds,
+            .map(|n| {
+                let m = match (n.team_a, n.team_b) {
+                    (Some(a), Some(b)) => by_pair.get(&unordered(a, b)).copied(),
+                    _ => None,
+                };
+                BracketNodeView {
+                    kind: n.kind,
+                    round: n.round,
+                    index: n.index,
+                    team_a: name(n.team_a),
+                    team_b: name(n.team_b),
+                    winner: name(n.winner),
+                    feeds: n.feeds,
+                    match_id: m.map(|v| v.id),
+                    points_a: m.map(|v| v.points_a).unwrap_or(0),
+                    points_b: m.map(|v| v.points_b).unwrap_or(0),
+                    sets: m.map(|v| v.sets.clone()).unwrap_or_default(),
+                    irregular: m.is_some_and(|v| v.irregular),
+                }
             })
             .collect())
     }
