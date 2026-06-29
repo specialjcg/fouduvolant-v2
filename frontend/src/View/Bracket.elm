@@ -232,6 +232,36 @@ bracketTree s title nodes =
 
             boxesAndLines =
                 barrEls ++ List.concatMap roundEls (List.range 1 maxRound)
+
+            -- Petite finale (3e place) sits in the FINALE column, just below the
+            -- grande finale, so it reads as part of the bracket instead of a
+            -- detached row buried under a tall tree.
+            finaleX =
+                xOf (colOf maxRound)
+
+            finaleCy =
+                cy (Basics.max 1 (countOf maxRound)) 0
+
+            thirdBaseY =
+                finaleCy + brkBoxH + 48
+
+            thirdEls =
+                thirdNodes
+                    |> List.indexedMap
+                        (\i n ->
+                            let
+                                yy =
+                                    thirdBaseY + toFloat i * brkCell
+                            in
+                            [ labelAt finaleX (yy - brkBoxH / 2 - 22) "Petite finale"
+                            , posBox s finaleX yy brkBoxH n
+                            ]
+                        )
+                    |> List.concat
+
+            absHeight =
+                Basics.max (totalH + brkTopPad + brkBoxH)
+                    (thirdBaseY + toFloat (List.length thirdNodes) * brkCell)
         in
         div []
             [ h3 [] [ text title ]
@@ -239,18 +269,10 @@ bracketTree s title nodes =
                 [ div
                     [ class "bracket-abs"
                     , Html.Attributes.style "width" (px (xOf maxCol + brkBoxW))
-                    , Html.Attributes.style "height" (px (totalH + brkTopPad + brkBoxH))
+                    , Html.Attributes.style "height" (px absHeight)
                     ]
-                    (titles ++ boxesAndLines)
+                    (titles ++ boxesAndLines ++ thirdEls)
                 ]
-            , if List.isEmpty thirdNodes then
-                text ""
-
-              else
-                div [ class "brk-third" ]
-                    (span [ class "brk-third-label" ] [ text "3e place" ]
-                        :: List.map (plainBox s) thirdNodes
-                    )
             ]
 
 
@@ -312,10 +334,18 @@ posBox s x cyc h n =
         [ seedRow n.teamA n.winner, seedRow n.teamB n.winner, scoreFooter s n ]
 
 
-plainBox : Sel -> BracketNode -> Html Msg
-plainBox s n =
-    div [ class "bmatch", Html.Attributes.style "width" (px brkBoxW) ]
-        [ seedRow n.teamA n.winner, seedRow n.teamB n.winner, scoreFooter s n ]
+{-| A positioned column label (e.g. "Petite finale") inside the absolute grid;
+inline `top` overrides the stylesheet's fixed offset used by column titles. -}
+labelAt : Float -> Float -> String -> Html Msg
+labelAt x y txt =
+    div
+        [ class "brk-title"
+        , Html.Attributes.style "left" (px x)
+        , Html.Attributes.style "top" (px y)
+        , Html.Attributes.style "width" (px brkBoxW)
+        , Html.Attributes.style "color" "var(--gold2)"
+        ]
+        [ text txt ]
 
 
 {-| Inline score entry inside a bracket box. A node only carries a `matchId`
