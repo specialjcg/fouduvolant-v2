@@ -338,13 +338,22 @@ bracketControls s names freeCourts m =
             ]
 
     else if m.status == "Playing" then
+        let
+            ( a, b ) =
+                Maybe.withDefault ( "", "" ) (Dict.get m.id s.scores)
+        in
         div []
             [ if List.isEmpty m.sets then
                 text ""
 
               else
                 div [ class "muted", Html.Attributes.style "font-size" ".7rem" ] [ text ("Sets : " ++ setsLabel m) ]
-            , scoreEntry s m.id
+            , div [ class "row brk-score" ]
+                [ input [ class "score", type_ "number", placeholder "0", value a, onInput (SetScore m.id 0) ] []
+                , text "-"
+                , input [ class "score", type_ "number", placeholder "0", value b, onInput (SetScore m.id 1) ] []
+                , button [ class "secondary", onClick (SubmitScore m.id) ] [ text "OK" ]
+                ]
             , div [ class "row", Html.Attributes.style "gap" ".25rem", Html.Attributes.style "align-items" "flex-start" ]
                 [ forfeitArea s names m
                 , button
