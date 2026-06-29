@@ -243,8 +243,10 @@ bracketTree s title nodes =
             finaleCy =
                 cy (Basics.max 1 (countOf maxRound)) 0
 
+            -- Drop the petite finale well below the grande finale so a tall
+            -- finale box (live controls / launch buttons) never overlaps it.
             thirdBaseY =
-                finaleCy + brkBoxH + 48
+                finaleCy + brkBoxH + 110
 
             thirdEls =
                 thirdNodes
@@ -279,7 +281,7 @@ bracketTree s title nodes =
 
 brkCell : Float
 brkCell =
-    96
+    116
 
 
 brkBoxW : Float
