@@ -281,7 +281,7 @@ bracketTree s title nodes =
 
 brkCell : Float
 brkCell =
-    116
+    152
 
 
 brkBoxW : Float
