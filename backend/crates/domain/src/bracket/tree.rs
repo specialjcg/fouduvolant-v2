@@ -225,9 +225,10 @@ fn build_tree(
         .collect();
     nodes.extend(build_rounds(kind, slot_teams, lk));
 
-    // Third-place match (petite finale) for brackets of 8+: the two semifinal
-    // losers. Round `THIRD_PLACE_ROUND` sorts it after the final.
-    if size >= 8 {
+    // Third-place match (petite finale) as soon as there are real semifinals
+    // (4+ entrants): the two semifinal losers. A 2-entrant draw is just a final,
+    // so no petite finale. Round `THIRD_PLACE_ROUND` sorts it after the final.
+    if size >= 4 {
         let final_round = size.trailing_zeros() as u8; // log2(size)
         let third = {
             let mut semis: Vec<&BracketNode> = nodes

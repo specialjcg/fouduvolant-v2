@@ -147,23 +147,21 @@
     }
 
     #[test]
-    fn third_place_only_for_eight_plus() {
+    fn third_place_for_four_plus_not_two() {
+        let count = |seeds: &[TeamId]| {
+            build_bracket(seeds, &[], &[])
+                .iter()
+                .filter(|n| n.round == THIRD_PLACE_ROUND)
+                .count()
+        };
+        // 2 entrants = just a final, no semifinals -> no petite finale.
+        let two: Vec<TeamId> = (1..=2).map(team).collect();
+        assert_eq!(count(&two), 0);
+        // 4 entrants = two semifinals -> a petite finale exists (losers TBD).
         let four: Vec<TeamId> = (1..=4).map(team).collect();
-        assert_eq!(
-            build_bracket(&four, &[], &[])
-                .iter()
-                .filter(|n| n.round == THIRD_PLACE_ROUND)
-                .count(),
-            0
-        );
+        assert_eq!(count(&four), 1);
         let eight: Vec<TeamId> = (1..=8).map(team).collect();
-        assert_eq!(
-            build_bracket(&eight, &[], &[])
-                .iter()
-                .filter(|n| n.round == THIRD_PLACE_ROUND)
-                .count(),
-            1
-        );
+        assert_eq!(count(&eight), 1);
     }
 
     #[test]
