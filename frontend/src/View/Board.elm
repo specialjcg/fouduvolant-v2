@@ -1,4 +1,4 @@
-module View.Board exposing (launchButtons, viewBoard)
+module View.Board exposing (bracketControls, launchButtons, viewBoard)
 
 import Dict exposing (Dict)
 import Html exposing (..)
@@ -294,6 +294,83 @@ previewNode freeCourts court names m =
         , div [ class "row", Html.Attributes.style "gap" "4px", Html.Attributes.style "flex-wrap" "wrap" ]
             (launchButtons court freeCourts m.id)
         ]
+
+
+{-| Full match controls for a bracket box, mirroring the timeline node:
+- Pending  → launch on a free court (▶ T{n}) + forfeit (no-show)
+- Playing  → live score entry + forfeit + ↺ annuler (unstart)
+- Done     → score + ✎ edit + ↺ reset, with the BWF warning
+
+Reuses the board helpers so the bracket and the timeline stay identical. -}
+bracketControls : Sel -> Dict String String -> List ( Int, String ) -> MatchV -> Html Msg
+bracketControls s names freeCourts m =
+    if m.status == "Done" then
+        div []
+            [ if s.editing == Just m.id then
+                let
+                    ( a, b ) =
+                        Maybe.withDefault ( String.fromInt m.pointsA, String.fromInt m.pointsB )
+                            (Dict.get m.id s.scores)
+                in
+                div [ class "row brk-score" ]
+                    [ input [ class "score", type_ "number", value a, onInput (SetScore m.id 0) ] []
+                    , text "-"
+                    , input [ class "score", type_ "number", value b, onInput (SetScore m.id 1) ] []
+                    , button [ onClick (Rescore m.id) ] [ text "OK" ]
+                    , button [ class "secondary", onClick CancelEdit ] [ text "✕" ]
+                    ]
+
+              else
+                div [ class "row brk-score" ]
+                    [ span [ Html.Attributes.style "font-weight" "600" ]
+                        [ text
+                            (if m.conceded then
+                                "Forfait"
+
+                             else
+                                setsLabel m
+                            )
+                        ]
+                    , button [ class "secondary", onClick (EditScore m.id m.pointsA m.pointsB) ] [ text "✎" ]
+                    , button [ class "secondary", onClick (ResetMatch m.id), Html.Attributes.title "Réinitialiser ce match" ] [ text "↺" ]
+                    ]
+            , bwfWarning m
+            ]
+
+    else if m.status == "Playing" then
+        div []
+            [ if List.isEmpty m.sets then
+                text ""
+
+              else
+                div [ class "muted", Html.Attributes.style "font-size" ".7rem" ] [ text ("Sets : " ++ setsLabel m) ]
+            , scoreEntry s m.id
+            , forfeitArea s names m
+            , div [ class "forfeit-trigger" ]
+                [ button
+                    [ class "secondary forfeit-mini"
+                    , Html.Attributes.title "Annuler le démarrage : remet le match à jouer et libère le terrain"
+                    , onClick (UnstartMatch m.id)
+                    ]
+                    [ text "↺ Annuler" ]
+                ]
+            ]
+
+    else
+        div []
+            [ div [ class "row brk-score" ]
+                (if List.isEmpty freeCourts then
+                    [ span [ class "muted", Html.Attributes.style "font-size" ".72rem" ] [ text "terrains occupés" ] ]
+
+                 else
+                    List.map
+                        (\( n, c ) ->
+                            button [ class "secondary", onClick (StartMatch m.id c) ] [ text ("▶ T" ++ String.fromInt n) ]
+                        )
+                        freeCourts
+                )
+            , forfeitArea s names m
+            ]
 
 
 scoreEntry : Sel -> String -> Html Msg

@@ -8,6 +8,7 @@ import Json.Decode as D
 import Time
 import Helpers exposing (..)
 import Types exposing (..)
+import View.Board
 
 
 viewBracket : Sel -> Html Msg
@@ -348,98 +349,51 @@ labelAt x y txt =
         [ text txt ]
 
 
-{-| Inline score entry inside a bracket box. A node only carries a `matchId`
-once its pairing is materialized (auto-scheduled by the backend as soon as both
-teams are known). Decided match → recorded score + edit (✎). Materialized but
-undecided → a set-entry row that appends a set, exactly like the board. Reuses
-the board's draft state (`s.scores` / `s.editing`) and messages. -}
+{-| Controls inside a bracket box, identical to the timeline. A node carries a
+`matchId` once its pairing is materialized (scheduled): we look the live match up
+in the board snapshot and reuse the board's controls (score / court launch /
+forfeit / undo). A playable pairing not yet scheduled (e.g. a freshly-eligible
+petite finale) gets a "▶ Planifier" button that materializes it. -}
 scoreFooter : Sel -> BracketNode -> Html Msg
 scoreFooter s n =
     case n.matchId of
-        Nothing ->
-            text ""
-
         Just mid ->
-            if n.winner /= Nothing then
-                brkDone s mid n
+            case List.head (List.filter (\m -> m.id == mid) s.board.matches) of
+                Just mv ->
+                    View.Board.bracketControls s (teamNames s) (freeCourts s) mv
+
+                Nothing ->
+                    text ""
+
+        Nothing ->
+            if n.teamA /= Nothing && n.teamB /= Nothing && n.winner == Nothing then
+                div [ class "row brk-score" ]
+                    [ button
+                        [ class "secondary"
+                        , Html.Attributes.title "Planifier ce match pour pouvoir le lancer sur un terrain et le scorer"
+                        , onClick AdvanceBracket
+                        ]
+                        [ text "▶ Planifier" ]
+                    ]
 
             else
-                brkEntry s mid n
+                text ""
 
 
-brkDone : Sel -> String -> BracketNode -> Html Msg
-brkDone s mid n =
+teamNames : Sel -> Dict String String
+teamNames s =
+    Dict.fromList (List.map (\t -> ( t.id, t.name )) s.view.teams)
+
+
+freeCourts : Sel -> List ( Int, String )
+freeCourts s =
     let
-        ( a, b ) =
-            Maybe.withDefault ( String.fromInt n.pointsA, String.fromInt n.pointsB )
-                (Dict.get mid s.scores)
+        playing =
+            s.board.matches |> List.filter (\m -> m.status == "Playing") |> List.filterMap .court
     in
-    if s.editing == Just mid then
-        div [ class "row brk-score" ]
-            [ input [ class "score", type_ "number", value a, onInput (SetScore mid 0) ] []
-            , text "-"
-            , input [ class "score", type_ "number", value b, onInput (SetScore mid 1) ] []
-            , button [ onClick (Rescore mid) ] [ text "OK" ]
-            , button [ class "secondary", onClick CancelEdit ] [ text "✕" ]
-            ]
-
-    else
-        div []
-            [ div [ class "row brk-score" ]
-                [ span [ Html.Attributes.style "font-weight" "600" ] [ text (brkSetsLabel n) ]
-                , button [ class "secondary", onClick (EditScore mid n.pointsA n.pointsB) ] [ text "✎" ]
-                ]
-            , brkWarn n
-            ]
-
-
-brkEntry : Sel -> String -> BracketNode -> Html Msg
-brkEntry s mid n =
-    let
-        ( a, b ) =
-            Maybe.withDefault ( "", "" ) (Dict.get mid s.scores)
-    in
-    div []
-        [ if List.isEmpty n.sets then
-            text ""
-
-          else
-            div [ class "muted", Html.Attributes.style "font-size" ".68rem" ]
-                [ text ("Sets : " ++ brkSetsLabel n) ]
-        , div [ class "row brk-score" ]
-            [ input [ class "score", type_ "number", placeholder "0", value a, onInput (SetScore mid 0) ] []
-            , text "-"
-            , input [ class "score", type_ "number", placeholder "0", value b, onInput (SetScore mid 1) ] []
-            , button [ class "secondary", onClick (SubmitScore mid) ] [ text "OK" ]
-            ]
-        , brkWarn n
-        ]
-
-
-brkSetsLabel : BracketNode -> String
-brkSetsLabel n =
-    if List.isEmpty n.sets then
-        String.fromInt n.pointsA ++ "-" ++ String.fromInt n.pointsB
-
-    else
-        n.sets
-            |> List.map (\( a, b ) -> String.fromInt a ++ "-" ++ String.fromInt b)
-            |> String.join "  "
-
-
-brkWarn : BracketNode -> Html Msg
-brkWarn n =
-    if n.irregular then
-        div
-            [ class "muted"
-            , Html.Attributes.style "font-size" ".66rem"
-            , Html.Attributes.style "color" "#c0392b"
-            , Html.Attributes.title "Score enregistré tel quel, ne suit pas la règle BWF (21, écart de 2, plafond 30)"
-            ]
-            [ text "⚠ hors BWF" ]
-
-    else
-        text ""
+    s.view.courts
+        |> List.indexedMap (\i c -> ( i + 1, c ))
+        |> List.filter (\( _, c ) -> not (List.member c playing))
 
 
 connector : Float -> Float -> Float -> Float -> List (Html Msg)
