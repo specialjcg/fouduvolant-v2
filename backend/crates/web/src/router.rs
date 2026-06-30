@@ -46,6 +46,7 @@ pub(crate) fn router(app: Arc<App>) -> Router {
         .route("/tournaments/{id}/board", get(board))
         .route("/tournaments/{id}/standings", get(standings))
         .route("/tournaments/{id}/schedule", get(schedule))
+        .route("/tournaments/{id}/qr", get(qr))
         .route("/tournaments/{id}/bracket", get(get_bracket).post(generate_bracket))
         .route("/tournaments/{id}/bracket/advance", post(advance_bracket))
         .route("/tournaments/{id}/bracket/reset", post(reset_bracket))

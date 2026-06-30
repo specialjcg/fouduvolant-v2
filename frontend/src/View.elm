@@ -10,6 +10,7 @@ import View.Board exposing (viewBoard)
 import View.Bracket exposing (viewBracket)
 import View.List exposing (viewList)
 import View.Pools exposing (viewPools)
+import View.Public exposing (viewPublic)
 import View.Schedule exposing (viewSchedule)
 import View.Standings exposing (viewStandings)
 import View.Teams exposing (viewTeams)
@@ -17,6 +18,32 @@ import View.Teams exposing (viewTeams)
 
 view : Model -> Html Msg
 view model =
+    if model.public then
+        viewPublicShell model
+
+    else
+        viewAdmin model
+
+
+{-| Read-only public shell: no admin header, no tabs, no controls. -}
+viewPublicShell : Model -> Html Msg
+viewPublicShell model =
+    div []
+        [ header []
+            [ h1 [] [ text "🏸 Fou du ", span [ class "accent" ] [ text "Volant" ] ] ]
+        , main_ []
+            [ case model.sel of
+                Just s ->
+                    viewPublic model.now model.zone s
+
+                Nothing ->
+                    div [ class "panel" ] [ p [ class "muted" ] [ text "Chargement…" ] ]
+            ]
+        ]
+
+
+viewAdmin : Model -> Html Msg
+viewAdmin model =
     div []
         [ header []
             [ h1 [] [ text "🏸 Fou du ", span [ class "accent" ] [ text "Volant" ] ]
@@ -63,7 +90,7 @@ viewTournament showPast now zone s =
                     viewBoard showPast s names
 
                 StepSchedule ->
-                    viewSchedule now zone s
+                    viewSchedule False now zone s
 
                 StepFinals ->
                     viewBracket s

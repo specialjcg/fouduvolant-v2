@@ -6,7 +6,7 @@ import Time
 
 
 type alias Flags =
-    { apiBase : String, open : String, showPast : Bool }
+    { apiBase : String, open : String, showPast : Bool, public : Bool }
 
 
 type alias Model =
@@ -19,6 +19,7 @@ type alias Model =
     , showPast : Bool
     , now : Time.Posix
     , zone : Time.Zone
+    , public : Bool
     }
 
 

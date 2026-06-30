@@ -11,9 +11,11 @@ import Types exposing (..)
 import View.Board exposing (launchButtons)
 
 
-{-| Prévisionnel : page dédiée, horaires réels = heure système + ETA cumulée. -}
-viewSchedule : Time.Posix -> Time.Zone -> Sel -> Html Msg
-viewSchedule now zone s =
+{-| Prévisionnel : page dédiée, horaires réels = heure système + ETA cumulée.
+`readOnly` strips every launch button (used by the public view).
+-}
+viewSchedule : Bool -> Time.Posix -> Time.Zone -> Sel -> Html Msg
+viewSchedule readOnly now zone s =
     let
         -- Courts with nobody playing right now (free → can host a match).
         playingCourts =
@@ -47,6 +49,11 @@ viewSchedule now zone s =
         [ h2 [] [ text "Prévisionnel" ]
         , p [ class "muted" ]
             [ text ("Horaires estimés (≈15 min/match) à partir de " ++ clockAt zone now 0) ]
+        , if readOnly then
+            text ""
+
+          else
+            publicShareBlock s.id
         , div [ class "row", Html.Attributes.style "margin" ".4rem 0" ]
             [ input
                 [ type_ "search"
@@ -81,7 +88,44 @@ viewSchedule now zone s =
                 ]
 
           else
-            div [] (List.map (\( i, fc ) -> forecastCourtView now zone freeCourts i fc) filtered)
+            div [] (List.map (\( i, fc ) -> forecastCourtView readOnly now zone freeCourts i fc) filtered)
+        ]
+
+
+{-| Admin-only: link + QR to the public read-only view, for a big screen or
+to print at the scorer's table. -}
+publicShareBlock : String -> Html Msg
+publicShareBlock tid =
+    let
+        publicUrl =
+            "/?public=" ++ tid
+    in
+    div
+        [ class "row"
+        , Html.Attributes.style "align-items" "center"
+        , Html.Attributes.style "gap" ".8rem"
+        , Html.Attributes.style "margin" ".4rem 0"
+        , Html.Attributes.style "padding" ".5rem"
+        , Html.Attributes.style "border" "1px dashed var(--primary)"
+        , Html.Attributes.style "border-radius" "8px"
+        ]
+        [ img
+            [ Html.Attributes.src ("/tournaments/" ++ tid ++ "/qr")
+            , Html.Attributes.alt "QR vue publique"
+            , Html.Attributes.width 96
+            , Html.Attributes.height 96
+            ]
+            []
+        , div []
+            [ a
+                [ Html.Attributes.href publicUrl
+                , Html.Attributes.target "_blank"
+                , Html.Attributes.style "font-weight" "600"
+                ]
+                [ text "📺 Vue publique (read-only)" ]
+            , p [ class "muted", Html.Attributes.style "margin" ".2rem 0 0" ]
+                [ text "Affiche sur un écran ou imprime le QR : les joueurs scannent et trouvent quand ils jouent." ]
+            ]
         ]
 
 
@@ -128,35 +172,45 @@ clockAt zone base etaMin =
     pad (Time.toHour zone p) ++ "h" ++ pad (Time.toMinute zone p)
 
 
-forecastCourtView : Time.Posix -> Time.Zone -> List ( Int, String ) -> Int -> ForecastCourt -> Html Msg
-forecastCourtView now zone freeCourts idx fc =
+forecastCourtView : Bool -> Time.Posix -> Time.Zone -> List ( Int, String ) -> Int -> ForecastCourt -> Html Msg
+forecastCourtView readOnly now zone freeCourts idx fc =
     let
         -- Only the next two pending matches of this court get launch buttons,
-        -- to keep the timeline readable.
+        -- to keep the timeline readable. Public view = no buttons at all.
         launchable =
-            fc.matches
-                |> List.filter (\m -> m.status == "Pending")
-                |> List.take 2
-                |> List.map .id
+            if readOnly then
+                []
+
+            else
+                fc.matches
+                    |> List.filter (\m -> m.status == "Pending")
+                    |> List.take 2
+                    |> List.map .id
     in
     div [ Html.Attributes.style "margin-bottom" ".8rem" ]
         [ h4 [ Html.Attributes.style "margin" ".3rem 0", Html.Attributes.style "color" "var(--primary)" ]
             [ text ("Terrain " ++ String.fromInt (idx + 1)) ]
         , table []
             (tr []
-                [ th [] [ text "Heure" ]
-                , th [] [ text "Poule" ]
-                , th [] [ text "Match" ]
-                , th [] [ text "Score" ]
-                , th [] [ text "Action" ]
-                ]
-                :: List.map (forecastRow now zone freeCourts fc.court launchable) fc.matches
+                ([ th [] [ text "Heure" ]
+                 , th [] [ text "Poule" ]
+                 , th [] [ text "Match" ]
+                 , th [] [ text "Score" ]
+                 ]
+                    ++ (if readOnly then
+                            []
+
+                        else
+                            [ th [] [ text "Action" ] ]
+                       )
+                )
+                :: List.map (forecastRow readOnly now zone freeCourts fc.court launchable) fc.matches
             )
         ]
 
 
-forecastRow : Time.Posix -> Time.Zone -> List ( Int, String ) -> String -> List String -> ForecastMatch -> Html Msg
-forecastRow now zone freeCourts court launchable m =
+forecastRow : Bool -> Time.Posix -> Time.Zone -> List ( Int, String ) -> String -> List String -> ForecastMatch -> Html Msg
+forecastRow readOnly now zone freeCourts court launchable m =
     let
         score =
             if m.status == "Done" then
@@ -177,11 +231,17 @@ forecastRow now zone freeCourts court launchable m =
                 text ""
     in
     tr []
-        [ td [] [ text (clockAt zone now m.etaMin) ]
-        , td [] [ text (Maybe.withDefault "" m.pool) ]
-        , td [] [ text (m.teamA ++ " vs " ++ m.teamB) ]
-        , td [] [ text score ]
-        , td [] [ action ]
-        ]
+        ([ td [] [ text (clockAt zone now m.etaMin) ]
+         , td [] [ text (Maybe.withDefault "" m.pool) ]
+         , td [] [ text (m.teamA ++ " vs " ++ m.teamB) ]
+         , td [] [ text score ]
+         ]
+            ++ (if readOnly then
+                    []
+
+                else
+                    [ td [] [ action ] ]
+               )
+        )
 
 

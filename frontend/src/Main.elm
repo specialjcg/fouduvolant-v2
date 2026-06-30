@@ -40,7 +40,11 @@ init flags =
             List.head parts |> Maybe.withDefault ""
 
         want =
-            parts |> List.drop 1 |> List.head |> Maybe.map stepFromString |> Maybe.withDefault StepTeams
+            if flags.public then
+                StepSchedule
+
+            else
+                parts |> List.drop 1 |> List.head |> Maybe.map stepFromString |> Maybe.withDefault StepTeams
     in
     ( { api = flags.apiBase
       , tournaments = []
@@ -51,6 +55,7 @@ init flags =
       , showPast = flags.showPast
       , now = Time.millisToPosix 0
       , zone = Time.utc
+      , public = flags.public
       }
     , Cmd.batch
         [ loadTournaments flags.apiBase

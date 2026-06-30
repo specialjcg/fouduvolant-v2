@@ -260,12 +260,14 @@
   <script src="elm.js"></script>
   <script>
     var apiBase = (location.search.match(/[?&]api=([^&]+)/) || [])[1];
+    var publicId = (location.search.match(/[?&]public=([^&]+)/) || [])[1];
     var app = Elm.Main.init({
       node: document.getElementById("app"),
       flags: {
         apiBase: apiBase ? decodeURIComponent(apiBase) : "",
-        open: location.hash.replace(/^#/, ""),
-        showPast: localStorage.getItem("showPast") === "1"
+        open: publicId ? decodeURIComponent(publicId) : location.hash.replace(/^#/, ""),
+        showPast: localStorage.getItem("showPast") === "1",
+        public: !!publicId
       }
     });
     if (app.ports && app.ports.saveShowPast) {
