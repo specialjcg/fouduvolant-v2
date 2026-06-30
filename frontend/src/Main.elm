@@ -398,6 +398,9 @@ update msg model =
             in
             ( { model | showPast = next }, saveShowPast next )
 
+        SetScheduleSearch q ->
+            ( mapSel (\s -> { s | scheduleSearch = q }) model, Cmd.none )
+
         SetScore matchId which v ->
             ( mapSel
                 (\s ->
@@ -538,6 +541,7 @@ mergeView wantStep prev v =
             , dragged = Nothing
             , confirmForfeit = Nothing
             , forfeitOpen = Nothing
+            , scheduleSearch = ""
             }
 
 

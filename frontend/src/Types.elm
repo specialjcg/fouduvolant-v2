@@ -45,6 +45,7 @@ type alias Sel =
     , dragged : Maybe String
     , confirmForfeit : Maybe String
     , forfeitOpen : Maybe String
+    , scheduleSearch : String
     }
 
 
@@ -216,6 +217,7 @@ type Msg
     | ConcedeMatch String String
     | ToggleForfeit String
     | UnstartMatch String
+    | SetScheduleSearch String
     | Mutated (Result Http.Error ())
     | Tick Time.Posix
     | GotZone Time.Zone

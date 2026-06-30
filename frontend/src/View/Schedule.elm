@@ -23,16 +23,65 @@ viewSchedule now zone s =
             s.view.courts
                 |> List.indexedMap (\i c -> ( i + 1, c ))
                 |> List.filter (\( _, c ) -> not (List.member c playingCourts))
+
+        q =
+            String.trim (String.toLower s.scheduleSearch)
+
+        matches m =
+            q == "" || String.contains q (String.toLower m.teamA) || String.contains q (String.toLower m.teamB)
+
+        -- Keep original court indices so "Terrain N" stays correct after filtering.
+        filtered =
+            s.schedule
+                |> List.indexedMap (\i fc -> ( i, { fc | matches = List.filter matches fc.matches } ))
+                |> List.filter (\( _, fc ) -> not (List.isEmpty fc.matches))
+
+        nextHit =
+            filtered
+                |> List.concatMap (\( _, fc ) -> fc.matches)
+                |> List.filter (\m -> m.status == "Pending" || m.status == "Playing")
+                |> List.sortBy .etaMin
+                |> List.head
     in
     div [ class "panel" ]
         [ h2 [] [ text "Prévisionnel" ]
         , p [ class "muted" ]
             [ text ("Horaires estimés (≈15 min/match) à partir de " ++ clockAt zone now 0) ]
-        , if List.all (\fc -> List.isEmpty fc.matches) s.schedule then
-            p [ class "muted" ] [ text "Rien à prévoir pour l'instant." ]
+        , div [ class "row", Html.Attributes.style "margin" ".4rem 0" ]
+            [ input
+                [ type_ "search"
+                , placeholder "🔍 Ton équipe → tes matchs"
+                , value s.scheduleSearch
+                , onInput SetScheduleSearch
+                , Html.Attributes.style "flex" "1"
+                ]
+                []
+            , if s.scheduleSearch /= "" then
+                button [ class "secondary", onClick (SetScheduleSearch "") ] [ text "✕" ]
+
+              else
+                text ""
+            ]
+        , case ( q /= "", nextHit ) of
+            ( True, Just m ) ->
+                p [ Html.Attributes.style "font-weight" "600", Html.Attributes.style "color" "var(--primary)" ]
+                    [ text ("▶ Prochain : " ++ m.teamA ++ " vs " ++ m.teamB ++ " — " ++ clockAt zone now m.etaMin) ]
+
+            _ ->
+                text ""
+        , if List.isEmpty filtered then
+            p [ class "muted" ]
+                [ text
+                    (if q /= "" then
+                        "Aucun match à venir pour « " ++ s.scheduleSearch ++ " »."
+
+                     else
+                        "Rien à prévoir pour l'instant."
+                    )
+                ]
 
           else
-            div [] (List.indexedMap (forecastCourtView now zone freeCourts) s.schedule)
+            div [] (List.map (\( i, fc ) -> forecastCourtView now zone freeCourts i fc) filtered)
         ]
 
 
