@@ -38,9 +38,9 @@ viewSchedule now zone s =
 
         nextHit =
             filtered
-                |> List.concatMap (\( _, fc ) -> fc.matches)
-                |> List.filter (\m -> m.status == "Pending" || m.status == "Playing")
-                |> List.sortBy .etaMin
+                |> List.concatMap (\( i, fc ) -> List.map (\m -> ( i + 1, m )) fc.matches)
+                |> List.filter (\( _, m ) -> m.status == "Pending" || m.status == "Playing")
+                |> List.sortBy (\( _, m ) -> m.etaMin)
                 |> List.head
     in
     div [ class "panel" ]
@@ -63,9 +63,9 @@ viewSchedule now zone s =
                 text ""
             ]
         , case ( q /= "", nextHit ) of
-            ( True, Just m ) ->
+            ( True, Just ( terrain, m ) ) ->
                 p [ Html.Attributes.style "font-weight" "600", Html.Attributes.style "color" "var(--primary)" ]
-                    [ text ("▶ Prochain : " ++ m.teamA ++ " vs " ++ m.teamB ++ " — " ++ clockAt zone now m.etaMin) ]
+                    [ text ("▶ Prochain : " ++ m.teamA ++ " vs " ++ m.teamB ++ " — Terrain " ++ String.fromInt terrain ++ " · " ++ etaLabel m.status m.etaMin) ]
 
             _ ->
                 text ""
@@ -83,6 +83,36 @@ viewSchedule now zone s =
           else
             div [] (List.map (\( i, fc ) -> forecastCourtView now zone freeCourts i fc) filtered)
         ]
+
+
+{-| Reassuring ETA: matches-ahead (reliable) + soft minute range. ETA is a
+flat 15-min/slot model, so we lead with the queue position, not hard minutes.
+-}
+etaLabel : String -> Int -> String
+etaLabel status etaMin =
+    let
+        slot =
+            etaMin // 15
+    in
+    if status == "Playing" then
+        "● en cours"
+
+    else if slot <= 0 then
+        "à toi de jouer — terrain libre"
+
+    else
+        String.fromInt slot
+            ++ (if slot == 1 then
+                    " match avant toi"
+
+                else
+                    " matchs avant toi"
+               )
+            ++ " · ~"
+            ++ String.fromInt (slot * 15)
+            ++ "-"
+            ++ String.fromInt (slot * 20)
+            ++ " min"
 
 
 {-| Wall-clock "HHhMM" of `base` shifted by `etaMin` minutes, in `zone`. -}
